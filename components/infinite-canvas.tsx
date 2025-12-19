@@ -3,10 +3,12 @@
 import type React from "react"
 import { forwardRef, useState, useCallback, useRef, useEffect } from "react"
 import { Rnd } from "react-rnd"
-import { Upload, ZoomIn, ZoomOut, Maximize, Download, X, Check, Crown } from "lucide-react"
+import { Upload, Download, X, Check, Crown, Undo2, Redo2, Minus, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { PlacedItem, Marker } from "./room-designer"
 import { cn } from "@/lib/utils"
+
+type Tool = "select" | "catalog" | "hand"
 
 type InfiniteCanvasProps = {
   items: PlacedItem[]
@@ -14,13 +16,14 @@ type InfiniteCanvasProps = {
   selectedForGeneration: Set<string>
   baseImageId: string | null
   markerPlacementMode: { refNumber: number } | null
+  activeTool: Tool
   onItemSelect: (id: string | null) => void
   onToggleGenerationSelection: (id: string) => void
   onSetBase: (id: string) => void
   onItemUpdate: (id: string, updates: Partial<PlacedItem>) => void
   onItemDelete: (id: string) => void
   onItemsDelete: (ids: string[]) => void
-  onRoomUpload: (imageUrl: string) => void
+  onRoomUpload: (imageUrl: string, filename?: string) => void
   onDownloadItem: (item: PlacedItem) => void
   onAddPin: (x: number, y: number) => void
   onAddLasso: (points: { x: number; y: number }[]) => void
@@ -41,6 +44,7 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
       selectedForGeneration,
       baseImageId,
       markerPlacementMode,
+      activeTool,
       onItemSelect,
       onToggleGenerationSelection,
       onSetBase,
@@ -74,6 +78,10 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
     const [rectSelectStart, setRectSelectStart] = useState<{ x: number; y: number } | null>(null)
     const [rectSelectEnd, setRectSelectEnd] = useState<{ x: number; y: number } | null>(null)
     const [multiSelectedItems, setMultiSelectedItems] = useState<Set<string>>(new Set())
+
+    // Hand tool panning state
+    const [isPanning, setIsPanning] = useState(false)
+    const [panStart, setPanStart] = useState<{ x: number; y: number } | null>(null)
 
     const referenceImages = getReferenceImages()
 
@@ -237,6 +245,34 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
       }
     }, [isRectSelecting, rectSelectStart, rectSelectEnd, items, zoom, panOffset])
 
+    // Hand tool panning effect
+    useEffect(() => {
+      if (!isPanning || !panStart) return
+
+      const handleMouseMove = (e: MouseEvent) => {
+        const deltaX = e.clientX - panStart.x
+        const deltaY = e.clientY - panStart.y
+        setPanOffset((prev) => ({
+          x: prev.x + deltaX,
+          y: prev.y + deltaY,
+        }))
+        setPanStart({ x: e.clientX, y: e.clientY })
+      }
+
+      const handleMouseUp = () => {
+        setIsPanning(false)
+        setPanStart(null)
+      }
+
+      window.addEventListener("mousemove", handleMouseMove)
+      window.addEventListener("mouseup", handleMouseUp)
+
+      return () => {
+        window.removeEventListener("mousemove", handleMouseMove)
+        window.removeEventListener("mouseup", handleMouseUp)
+      }
+    }, [isPanning, panStart])
+
     const simplifyPath = (points: { x: number; y: number }[], tolerance: number): { x: number; y: number }[] => {
       if (points.length <= 2) return points
 
@@ -284,9 +320,10 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
       if (file) {
+        const filename = file.name
         const reader = new FileReader()
         reader.onload = (event) => {
-          onRoomUpload(event.target?.result as string)
+          onRoomUpload(event.target?.result as string, filename)
         }
         reader.readAsDataURL(file)
       }
@@ -314,9 +351,10 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
         if (files.length > 0) {
           const file = files[0]
           if (file.type.startsWith("image/")) {
+            const filename = file.name
             const reader = new FileReader()
             reader.onload = (event) => {
-              onRoomUpload(event.target?.result as string)
+              onRoomUpload(event.target?.result as string, filename)
             }
             reader.readAsDataURL(file)
           }
@@ -327,10 +365,19 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
 
     const handleCanvasMouseDown = useCallback(
       (e: React.MouseEvent) => {
-        // Only start rectangle selection if clicking on the canvas background
         const target = e.target as HTMLElement
         if (target === containerRef.current || target.dataset.canvas === "true") {
-          if (!markerPlacementMode) {
+          if (markerPlacementMode) return
+
+          // Hand tool: start panning
+          if (activeTool === "hand") {
+            setIsPanning(true)
+            setPanStart({ x: e.clientX, y: e.clientY })
+            return
+          }
+
+          // Select tool: start rectangle selection
+          if (activeTool === "select") {
             const rect = containerRef.current!.getBoundingClientRect()
             setRectSelectStart({
               x: e.clientX - rect.left,
@@ -345,7 +392,7 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
           }
         }
       },
-      [markerPlacementMode],
+      [markerPlacementMode, activeTool],
     )
 
     const handleCanvasClick = useCallback(
@@ -451,11 +498,15 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
     }
 
     const renderMarker = (marker: Marker) => {
+      // Get object name for this reference
+      const refItem = referenceImages.find((r) => r.referenceNumber === marker.referenceNumber)
+      const objectName = refItem?.item?.name || refItem?.type || "Object"
+
       if (marker.type === "pin") {
         return (
           <div
             key={marker.id}
-            className="absolute w-6 h-6 -translate-x-1/2 -translate-y-1/2 rounded-full flex items-center justify-center text-xs font-bold cursor-pointer hover:scale-110 transition-transform shadow-lg bg-foreground text-background"
+            className="absolute cursor-pointer hover:scale-105 transition-transform"
             style={{
               left: `${marker.x}%`,
               top: `${marker.y}%`,
@@ -464,9 +515,16 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
               e.stopPropagation()
               onRemoveMarker(marker.id)
             }}
-            title="Click to remove"
+            title={`${marker.referenceNumber}: ${objectName} - Click to remove`}
           >
-            {marker.referenceNumber}
+            {/* Number circle centered on click point */}
+            <div className="absolute -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shadow-md bg-foreground text-background">
+              {marker.referenceNumber}
+            </div>
+            {/* Label positioned to the right of the number */}
+            <div className="absolute left-2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-medium shadow-md bg-foreground/90 text-background whitespace-nowrap">
+              {objectName}
+            </div>
           </div>
         )
       } else if (marker.type === "lasso" && marker.points.length > 2) {
@@ -482,8 +540,9 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
             >
               <polygon
                 points={marker.points.map((p) => `${p.x},${p.y}`).join(" ")}
-                className="fill-foreground/20 stroke-foreground pointer-events-auto cursor-pointer hover:fill-foreground/30"
-                strokeWidth="0.5"
+                className="fill-foreground/15 stroke-foreground pointer-events-auto cursor-pointer hover:fill-foreground/25"
+                strokeWidth="0.3"
+                strokeDasharray="1,1"
                 onClick={(e) => {
                   e.stopPropagation()
                   onRemoveMarker(marker.id)
@@ -491,7 +550,7 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
               />
             </svg>
             <div
-              className="absolute w-6 h-6 -translate-x-1/2 -translate-y-1/2 rounded-full flex items-center justify-center text-xs font-bold shadow-lg bg-foreground text-background pointer-events-auto cursor-pointer hover:scale-110 transition-transform"
+              className="absolute pointer-events-auto cursor-pointer hover:scale-105 transition-transform"
               style={{
                 left: `${centroidX}%`,
                 top: `${centroidY}%`,
@@ -500,9 +559,16 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
                 e.stopPropagation()
                 onRemoveMarker(marker.id)
               }}
-              title="Click to remove"
+              title={`${marker.referenceNumber}: ${objectName} - Click to remove`}
             >
-              {marker.referenceNumber}
+              {/* Number circle centered on centroid */}
+              <div className="absolute -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shadow-md bg-foreground text-background">
+                {marker.referenceNumber}
+              </div>
+              {/* Label positioned to the right of the number */}
+              <div className="absolute left-2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-medium shadow-md bg-foreground/90 text-background whitespace-nowrap">
+                {objectName}
+              </div>
             </div>
           </div>
         )
@@ -528,20 +594,34 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
           else if (ref) ref.current = node
         }}
         className={cn(
-          "absolute inset-0 overflow-hidden cursor-grab active:cursor-grabbing",
+          "absolute inset-0 overflow-hidden select-none",
+          // Cursor based on tool
+          activeTool === "hand" && !isPanning && "cursor-grab",
+          activeTool === "hand" && isPanning && "cursor-grabbing",
+          activeTool === "select" && !isRectSelecting && "cursor-default",
+          activeTool === "select" && isRectSelecting && "cursor-crosshair",
+          // Override for special modes
           isDraggingOver && "ring-4 ring-inset ring-primary/50",
           markerPlacementMode && "cursor-crosshair",
         )}
+        style={{ touchAction: "none" }}
         onClick={handleCanvasClick}
         onMouseDown={handleCanvasMouseDown}
+        onDragStart={(e) => e.preventDefault()}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        {/* Grid Background */}
+        {/* Canvas Click Layer - receives all clicks on empty areas */}
         <div
           data-canvas="true"
-          className="absolute inset-0 opacity-20"
+          className="absolute inset-0"
+          style={{ zIndex: 0 }}
+        />
+
+        {/* Grid Background */}
+        <div
+          className="absolute inset-0 opacity-20 pointer-events-none"
           style={{
             backgroundImage: `
               linear-gradient(to right, hsl(var(--border)) 1px, transparent 1px),
@@ -552,29 +632,20 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
           }}
         />
 
-        {markerPlacementMode && (
-          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-foreground text-background text-sm font-medium flex items-center gap-2">
-            Click or draw on the base image to place marker #{markerPlacementMode.refNumber}
-          </div>
-        )}
-
-        {isRectSelecting && selectionRect && selectionRect.width > 5 && selectionRect.height > 5 && (
+        {/* Rectangle Selection Overlay */}
+        {isRectSelecting && selectionRect && (
           <div
-            className="absolute border-2 border-primary bg-primary/10 pointer-events-none z-[9999]"
+            className="absolute border border-primary/80 bg-primary/5 pointer-events-none"
             style={{
               left: selectionRect.left,
               top: selectionRect.top,
-              width: selectionRect.width,
-              height: selectionRect.height,
+              width: Math.max(selectionRect.width, 1),
+              height: Math.max(selectionRect.height, 1),
+              zIndex: 10,
             }}
           />
         )}
 
-        {multiSelectedItems.size > 0 && (
-          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-foreground text-background text-sm font-medium flex items-center gap-2">
-            {multiSelectedItems.size} selected - Press Delete to remove
-          </div>
-        )}
 
         {/* Drag overlay indicator */}
         {isDraggingOver && (
@@ -590,10 +661,11 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
 
         {/* Canvas Content - transformed layer */}
         <div
-          data-canvas="true"
-          className="absolute inset-0 origin-top-left"
+          className="absolute inset-0 origin-top-left pointer-events-none"
           style={{
-            transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`,
+            transform: `translate3d(${panOffset.x}px, ${panOffset.y}px, 0) scale(${zoom})`,
+            willChange: "transform",
+            zIndex: 1,
           }}
         >
           {sortedItems.map((item, index) => {
@@ -628,7 +700,10 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
                 lockAspectRatio={true}
                 minWidth={50}
                 minHeight={50}
-                style={{ zIndex: selectedItem === item.id ? 1000 : index + 1 }}
+                style={{
+                  zIndex: selectedItem === item.id ? 1000 : index + 1,
+                  pointerEvents: "auto",
+                }}
                 enableResizing={{
                   top: false,
                   right: false,
@@ -650,16 +725,12 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
               >
                 <div
                   className={cn(
-                    "relative w-full h-full rounded-lg overflow-hidden transition-shadow",
-                    selectedItem === item.id
-                      ? "ring-2 ring-primary shadow-xl"
-                      : isMultiSelected
-                        ? "ring-2 ring-primary shadow-xl"
-                        : isBase
-                          ? "ring-2 ring-foreground shadow-lg"
-                          : isSelectedForGen
-                            ? "ring-2 ring-foreground shadow-lg"
-                            : "hover:ring-1 hover:ring-border",
+                    "relative w-full h-full overflow-hidden transition-all",
+                    selectedItem === item.id && "ring-2 ring-primary shadow-xl",
+                    isMultiSelected && "ring-2 ring-primary/70 shadow-lg bg-primary/5",
+                    !selectedItem && !isMultiSelected && isBase && "ring-2 ring-foreground shadow-lg",
+                    !selectedItem && !isMultiSelected && isSelectedForGen && !isBase && "ring-2 ring-foreground/70 shadow-md",
+                    !selectedItem && !isMultiSelected && !isBase && !isSelectedForGen && "hover:ring-1 hover:ring-border",
                     markerPlacementMode !== null && isBase && "cursor-crosshair ring-2 ring-primary animate-pulse",
                   )}
                   onMouseEnter={() => setHoveredItem(item.id)}
@@ -796,19 +867,23 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
         )}
 
         {/* Zoom Controls */}
-        <div className="absolute bottom-24 right-4 flex flex-col gap-2 z-40">
-          <Button size="icon" variant="secondary" onClick={handleZoomIn} className="shadow-md">
-            <ZoomIn className="w-4 h-4" />
+        <div className="absolute bottom-4 right-4 flex items-center gap-1 bg-card/95 backdrop-blur-md border border-border rounded-xl px-2 py-1.5 shadow-lg z-40">
+          <Button size="icon" variant="ghost" disabled className="h-8 w-8 text-muted-foreground">
+            <Undo2 className="w-4 h-4" />
           </Button>
-          <Button size="icon" variant="secondary" onClick={handleZoomOut} className="shadow-md">
-            <ZoomOut className="w-4 h-4" />
+          <Button size="icon" variant="ghost" disabled className="h-8 w-8 text-muted-foreground">
+            <Redo2 className="w-4 h-4" />
           </Button>
-          <Button size="icon" variant="secondary" onClick={handleResetView} className="shadow-md">
-            <Maximize className="w-4 h-4" />
+          <div className="w-px h-5 bg-border mx-1" />
+          <Button size="icon" variant="ghost" onClick={handleZoomOut} className="h-8 w-8">
+            <Minus className="w-4 h-4" />
           </Button>
-          <div className="text-xs text-center text-muted-foreground bg-card/80 rounded-md px-2 py-1">
+          <span className="text-sm text-muted-foreground w-12 text-center tabular-nums">
             {Math.round(zoom * 100)}%
-          </div>
+          </span>
+          <Button size="icon" variant="ghost" onClick={handleZoomIn} className="h-8 w-8">
+            <Plus className="w-4 h-4" />
+          </Button>
         </div>
       </div>
     )

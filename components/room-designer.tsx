@@ -2,11 +2,10 @@
 
 import { useState, useCallback, useRef, useEffect } from "react"
 import { InfiniteCanvas } from "./infinite-canvas"
-import { FloatingCatalog } from "./floating-catalog"
+import { LeftToolbar, type Tool } from "./left-toolbar"
 import { FloatingPromptBar, type GenerationSettings } from "./floating-prompt-bar"
 import { GenerationQueue, type QueueJob } from "./generation-queue"
-import { ThemeToggle } from "./theme-toggle"
-import { Home } from "lucide-react"
+import { TopBar } from "./top-bar"
 
 export type FurnitureItem = {
   id: string
@@ -77,7 +76,47 @@ async function imageUrlToBase64(url: string): Promise<string> {
   })
 }
 
-async function renderBaseWithMarkers(baseItem: PlacedItem): Promise<string> {
+// Resize image to max 1568px (AI APIs auto-downscale beyond this anyway)
+async function resizeImage(dataUrl: string): Promise<string> {
+  const MAX_SIZE = 1568
+  const QUALITY = 0.9
+
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.crossOrigin = "anonymous"
+    img.onload = () => {
+      const { width, height } = img
+      const longestEdge = Math.max(width, height)
+
+      // Skip if already within limits
+      if (longestEdge <= MAX_SIZE) {
+        resolve(dataUrl)
+        return
+      }
+
+      // Scale down to fit within MAX_SIZE
+      const scale = MAX_SIZE / longestEdge
+      const newWidth = Math.round(width * scale)
+      const newHeight = Math.round(height * scale)
+
+      const canvas = document.createElement("canvas")
+      canvas.width = newWidth
+      canvas.height = newHeight
+      const ctx = canvas.getContext("2d")!
+      ctx.drawImage(img, 0, 0, newWidth, newHeight)
+      resolve(canvas.toDataURL("image/jpeg", QUALITY))
+    }
+    img.onerror = () => resolve(dataUrl)
+    img.src = dataUrl
+  })
+}
+
+type ReferenceInfo = { referenceNumber: number; name: string }
+
+async function renderBaseWithMarkers(
+  baseItem: PlacedItem,
+  referenceInfos: ReferenceInfo[]
+): Promise<string> {
   const img = new Image()
   img.crossOrigin = "anonymous"
 
@@ -97,28 +136,53 @@ async function renderBaseWithMarkers(baseItem: PlacedItem): Promise<string> {
   ctx.drawImage(img, 0, 0)
 
   const markers = baseItem.markers || []
+  const fontSize = Math.max(16, Math.min(24, canvas.width * 0.02))
+
   for (const marker of markers) {
-    const color = "#000000"
+    // Get object name for this reference
+    const refInfo = referenceInfos.find((r) => r.referenceNumber === marker.referenceNumber)
+    const objectName = refInfo?.name || "Object"
 
     if (marker.type === "pin") {
       const x = (marker.x / 100) * canvas.width
       const y = (marker.y / 100) * canvas.height
-      const radius = Math.max(30, canvas.width * 0.03)
 
+      const circleRadius = fontSize * 0.8
+      const padding = 6
+
+      // Draw number circle at click point
       ctx.beginPath()
-      ctx.arc(x, y, radius, 0, Math.PI * 2)
-      ctx.fillStyle = color
+      ctx.arc(x, y, circleRadius, 0, Math.PI * 2)
+      ctx.fillStyle = "rgba(0, 0, 0, 0.9)"
       ctx.fill()
       ctx.strokeStyle = "#ffffff"
-      ctx.lineWidth = 3
+      ctx.lineWidth = 2
       ctx.stroke()
 
+      ctx.font = `bold ${fontSize}px sans-serif`
       ctx.fillStyle = "#ffffff"
-      ctx.font = `bold ${radius}px sans-serif`
       ctx.textAlign = "center"
       ctx.textBaseline = "middle"
-      ctx.fillText(marker.referenceNumber.toString(), x, y)
+      ctx.fillText(String(marker.referenceNumber), x, y)
+
+      // Draw label to the right of the number
+      const labelX = x + circleRadius + 4
+      const textWidth = ctx.measureText(objectName).width
+      const boxHeight = fontSize + padding * 2
+      const boxWidth = textWidth + padding * 2
+
+      ctx.fillStyle = "rgba(0, 0, 0, 0.85)"
+      ctx.beginPath()
+      ctx.roundRect(labelX, y - boxHeight / 2, boxWidth, boxHeight, 4)
+      ctx.fill()
+
+      ctx.fillStyle = "#ffffff"
+      ctx.textAlign = "left"
+      ctx.textBaseline = "middle"
+      ctx.fillText(objectName, labelX + padding, y)
+
     } else if (marker.type === "lasso" && marker.points.length > 2) {
+      // Draw lasso outline
       ctx.beginPath()
       const firstPoint = marker.points[0]
       ctx.moveTo((firstPoint.x / 100) * canvas.width, (firstPoint.y / 100) * canvas.height)
@@ -129,35 +193,57 @@ async function renderBaseWithMarkers(baseItem: PlacedItem): Promise<string> {
       }
       ctx.closePath()
 
-      ctx.fillStyle = "rgba(0, 0, 0, 0.25)"
+      ctx.fillStyle = "rgba(0, 0, 0, 0.15)"
       ctx.fill()
-      ctx.strokeStyle = color
-      ctx.lineWidth = 4
+      ctx.strokeStyle = "#000000"
+      ctx.lineWidth = 2
+      ctx.setLineDash([8, 4])
       ctx.stroke()
+      ctx.setLineDash([])
 
+      // Draw label at centroid with number on left, name on right
       const centroidX = marker.points.reduce((sum, p) => sum + p.x, 0) / marker.points.length
       const centroidY = marker.points.reduce((sum, p) => sum + p.y, 0) / marker.points.length
       const cx = (centroidX / 100) * canvas.width
       const cy = (centroidY / 100) * canvas.height
-      const radius = Math.max(25, canvas.width * 0.025)
 
+      const circleRadius = fontSize * 0.8
+      const padding = 6
+
+      // Draw number circle
       ctx.beginPath()
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2)
-      ctx.fillStyle = color
+      ctx.arc(cx, cy, circleRadius, 0, Math.PI * 2)
+      ctx.fillStyle = "rgba(0, 0, 0, 0.9)"
       ctx.fill()
       ctx.strokeStyle = "#ffffff"
       ctx.lineWidth = 2
       ctx.stroke()
 
+      ctx.font = `bold ${fontSize}px sans-serif`
       ctx.fillStyle = "#ffffff"
-      ctx.font = `bold ${radius}px sans-serif`
       ctx.textAlign = "center"
       ctx.textBaseline = "middle"
-      ctx.fillText(marker.referenceNumber.toString(), cx, cy)
+      ctx.fillText(String(marker.referenceNumber), cx, cy)
+
+      // Draw label to the right
+      const labelX = cx + circleRadius + 4
+      const textWidth = ctx.measureText(objectName).width
+      const boxHeight = fontSize + padding * 2
+      const boxWidth = textWidth + padding * 2
+
+      ctx.fillStyle = "rgba(0, 0, 0, 0.85)"
+      ctx.beginPath()
+      ctx.roundRect(labelX, cy - boxHeight / 2, boxWidth, boxHeight, 4)
+      ctx.fill()
+
+      ctx.fillStyle = "#ffffff"
+      ctx.textAlign = "left"
+      ctx.textBaseline = "middle"
+      ctx.fillText(objectName, labelX + padding, cy)
     }
   }
 
-  return canvas.toDataURL("image/png")
+  return canvas.toDataURL("image/jpeg", 0.9)
 }
 
 export function RoomDesigner() {
@@ -169,6 +255,8 @@ export function RoomDesigner() {
   const [markerPlacementMode, setMarkerPlacementMode] = useState<{
     refNumber: number
   } | null>(null)
+  const [activeTool, setActiveTool] = useState<Tool>("select")
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [queue, setQueue] = useState<QueueJob[]>([])
   const activeJobsRef = useRef<Set<string>>(new Set())
@@ -191,7 +279,12 @@ export function RoomDesigner() {
             setBaseImageId(null)
           }
         } else {
-          newSet.add(id)
+          // Count current references (excluding base)
+          const currentRefs = Array.from(prev).filter((itemId) => itemId !== baseImageId).length
+          // Only allow adding if under max 3 references, or if this will be the base
+          if (currentRefs < 3 || id === baseImageId) {
+            newSet.add(id)
+          }
         }
         return newSet
       })
@@ -292,10 +385,13 @@ export function RoomDesigner() {
     [baseImageId],
   )
 
-  const handleRoomUpload = useCallback((imageUrl: string) => {
+  const handleRoomUpload = useCallback(async (imageUrl: string, filename?: string) => {
+    // Compress image on upload to keep canvas fast and avoid API limits
+    const compressed = await resizeImage(imageUrl)
+
     const img = new Image()
     img.crossOrigin = "anonymous"
-    img.onload = () => {
+    img.onload = async () => {
       const aspectRatio = img.width / img.height
       const maxWidth = 800
       const maxHeight = 600
@@ -311,24 +407,59 @@ export function RoomDesigner() {
         width = height * aspectRatio
       }
 
+      const itemId = `room-${Date.now()}`
+
+      // Add item immediately with placeholder name
       const newRoom: PlacedItem = {
-        id: `room-${Date.now()}`,
+        id: itemId,
         type: "room",
-        src: imageUrl,
+        src: compressed,
         x: 100,
         y: 100,
         width,
         height,
         aspectRatio,
         markers: [],
+        item: { id: itemId, name: "Analyzing...", image: compressed, category: "room" },
       }
       setPlacedItems((prev) => [...prev, newRoom])
+
+      // Call API to get image description
+      try {
+        const response = await fetch("/api/describe-image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: compressed, filename }),
+        })
+        const data = await response.json()
+        if (data.success && data.name) {
+          setPlacedItems((prev) =>
+            prev.map((item) =>
+              item.id === itemId
+                ? { ...item, item: { ...item.item!, name: data.name } }
+                : item
+            )
+          )
+        }
+      } catch (error) {
+        // Fallback to generic name
+        setPlacedItems((prev) =>
+          prev.map((item) =>
+            item.id === itemId
+              ? { ...item, item: { ...item.item!, name: "Uploaded Image" } }
+              : item
+          )
+        )
+      }
     }
-    img.src = imageUrl
+    img.src = compressed
   }, [])
 
-  const handleFurnitureAdd = useCallback((item: FurnitureItem) => {
+  const handleFurnitureAdd = useCallback(async (item: FurnitureItem) => {
     const itemId = `${item.id}-${Date.now()}`
+
+    // Compress furniture image
+    const compressed = await resizeImage(item.image)
 
     const img = new Image()
     img.crossOrigin = "anonymous"
@@ -347,7 +478,7 @@ export function RoomDesigner() {
         id: itemId,
         type: "furniture",
         item,
-        src: item.image,
+        src: compressed,
         x: 200 + Math.random() * 200,
         y: 200 + Math.random() * 200,
         width,
@@ -356,7 +487,7 @@ export function RoomDesigner() {
       }
       setPlacedItems((prev) => [...prev, newFurniture])
     }
-    img.src = item.image
+    img.src = compressed
   }, [])
 
   const handleItemUpdate = useCallback((id: string, updates: Partial<PlacedItem>) => {
@@ -365,8 +496,29 @@ export function RoomDesigner() {
 
   const handleItemDelete = useCallback(
     (id: string) => {
-      setPlacedItems((prev) => prev.filter((item) => item.id !== id))
+      // Check if deleted item was a reference - need to clean up its markers
+      const refImages = getReferenceImages()
+      const deletedRef = refImages.find((r) => r.id === id)
+
+      if (deletedRef && baseImageId) {
+        // Remove markers for this reference from the base image
+        setPlacedItems((prev) =>
+          prev.map((item) => {
+            if (item.id === baseImageId && item.markers) {
+              return {
+                ...item,
+                markers: item.markers.filter((m) => m.referenceNumber !== deletedRef.referenceNumber),
+              }
+            }
+            return item
+          }).filter((item) => item.id !== id)
+        )
+      } else {
+        setPlacedItems((prev) => prev.filter((item) => item.id !== id))
+      }
+
       setSelectedItem(null)
+      setMarkerPlacementMode(null) // Cancel any marker placement
       setSelectedForGeneration((prev) => {
         const newSet = new Set(prev)
         newSet.delete(id)
@@ -374,15 +526,49 @@ export function RoomDesigner() {
       })
       if (baseImageId === id) {
         setBaseImageId(null)
+        // Clear all markers since base is deleted
+        setPlacedItems((prev) =>
+          prev.map((item) => ({ ...item, markers: [] }))
+        )
       }
     },
-    [baseImageId],
+    [baseImageId, getReferenceImages],
   )
 
   const handleItemsDelete = useCallback(
     (ids: string[]) => {
-      setPlacedItems((prev) => prev.filter((item) => !ids.includes(item.id)))
+      // Get reference numbers for deleted references to clean up markers
+      const refImages = getReferenceImages()
+      const deletedRefNumbers = refImages
+        .filter((r) => ids.includes(r.id))
+        .map((r) => r.referenceNumber)
+
+      setPlacedItems((prev) => {
+        let items = prev.filter((item) => !ids.includes(item.id))
+
+        // Clean up markers for deleted references
+        if (deletedRefNumbers.length > 0 && baseImageId && !ids.includes(baseImageId)) {
+          items = items.map((item) => {
+            if (item.id === baseImageId && item.markers) {
+              return {
+                ...item,
+                markers: item.markers.filter((m) => !deletedRefNumbers.includes(m.referenceNumber)),
+              }
+            }
+            return item
+          })
+        }
+
+        // Clear all markers if base was deleted
+        if (baseImageId && ids.includes(baseImageId)) {
+          items = items.map((item) => ({ ...item, markers: [] }))
+        }
+
+        return items
+      })
+
       setSelectedItem(null)
+      setMarkerPlacementMode(null)
       setSelectedForGeneration((prev) => {
         const newSet = new Set(prev)
         ids.forEach((id) => newSet.delete(id))
@@ -392,7 +578,7 @@ export function RoomDesigner() {
         setBaseImageId(null)
       }
     },
-    [baseImageId],
+    [baseImageId, getReferenceImages],
   )
 
   const handleDownloadItem = useCallback((item: PlacedItem) => {
@@ -559,27 +745,36 @@ export function RoomDesigner() {
       })
     }
 
-    // Prepare images
-    const imagesToSend: { role: string; data: string; referenceNumber?: number }[] = []
+    // Build reference info for markers
+    const referenceInfos: ReferenceInfo[] = referenceItems.map((r) => ({
+      referenceNumber: r.referenceNumber,
+      name: r.item?.name || r.type || "Object",
+    }))
+
+    // Prepare images (already compressed on upload)
+    const imagesToSend: { role: string; data: string; referenceNumber?: number; name?: string }[] = []
 
     if (baseItem) {
-      const baseWithMarkers = await renderBaseWithMarkers(baseItem)
+      const baseWithMarkers = await renderBaseWithMarkers(baseItem, referenceInfos)
       imagesToSend.push({ role: "base", data: baseWithMarkers })
     }
 
     for (const refItem of referenceItems) {
-      const refData = await imageUrlToBase64(refItem.src)
       imagesToSend.push({
         role: "reference",
-        data: refData,
+        data: refItem.src,
         referenceNumber: refItem.referenceNumber,
+        name: refItem.item?.name || refItem.type || "Object",
       })
     }
 
-    const markersWithColors = (baseItem?.markers || []).map((m) => ({
-      ...m,
-      color: getColorForReference(m.referenceNumber),
-    }))
+    const markersWithNames = (baseItem?.markers || []).map((m) => {
+      const refInfo = referenceInfos.find((r) => r.referenceNumber === m.referenceNumber)
+      return {
+        ...m,
+        objectName: refInfo?.name || "Object",
+      }
+    })
 
     // Generate a name for the job
     const jobName = prompt.trim()
@@ -595,7 +790,7 @@ export function RoomDesigner() {
         images: imagesToSend,
         hasBase: !!baseItem,
         referenceCount: referenceItems.length,
-        markers: markersWithColors,
+        markers: markersWithNames,
         prompt,
         settings,
         baseWidth,
@@ -609,15 +804,8 @@ export function RoomDesigner() {
 
   return (
     <div className="relative w-full h-screen overflow-hidden bg-background">
-      {/* Header */}
-      <header className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2 rounded-full bg-card/80 backdrop-blur-md border border-border shadow-lg">
-        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary text-primary-foreground">
-          <Home className="w-4 h-4" />
-        </div>
-        <h1 className="text-sm font-semibold text-foreground">Room Designer</h1>
-        <div className="w-px h-4 bg-border" />
-        <ThemeToggle />
-      </header>
+      {/* Top Bar */}
+      <TopBar />
 
       {/* Infinite Canvas */}
       <InfiniteCanvas
@@ -626,6 +814,7 @@ export function RoomDesigner() {
         selectedForGeneration={selectedForGeneration}
         baseImageId={baseImageId}
         markerPlacementMode={markerPlacementMode}
+        activeTool={activeTool}
         onItemSelect={setSelectedItem}
         onToggleGenerationSelection={handleToggleGenerationSelection}
         onSetBase={handleSetBase}
@@ -640,8 +829,36 @@ export function RoomDesigner() {
         getReferenceImages={getReferenceImages}
       />
 
-      {/* Floating Catalog - Left */}
-      <FloatingCatalog onSelect={handleFurnitureAdd} />
+      {/* Hidden file input for upload */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) {
+            const filename = file.name
+            const reader = new FileReader()
+            reader.onload = (event) => {
+              const imageUrl = event.target?.result as string
+              if (imageUrl) {
+                handleRoomUpload(imageUrl, filename)
+              }
+            }
+            reader.readAsDataURL(file)
+          }
+          e.target.value = ""
+        }}
+      />
+
+      {/* Left Toolbar */}
+      <LeftToolbar
+        onSelectItem={handleFurnitureAdd}
+        activeTool={activeTool}
+        onToolChange={setActiveTool}
+        onUpload={() => fileInputRef.current?.click()}
+      />
 
       {/* Floating Prompt Bar */}
       <FloatingPromptBar
@@ -651,8 +868,8 @@ export function RoomDesigner() {
         isGenerating={queue.some((j) => j.status === "processing")}
         selectedCount={selectedForGeneration.size}
         hasBase={!!baseImageId}
+        baseImage={placedItems.find((item) => item.id === baseImageId)}
         referenceImages={getReferenceImages()}
-        baseAspectRatio={getBaseAspectRatio()}
         markerPlacementMode={markerPlacementMode}
         onStartMarkerPlacement={setMarkerPlacementMode}
         onCancelMarkerPlacement={() => setMarkerPlacementMode(null)}
