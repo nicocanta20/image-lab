@@ -76,28 +76,37 @@ async function imageUrlToBase64(url: string): Promise<string> {
   })
 }
 
-// Compress image to reduce payload size for API calls
-async function compressImage(dataUrl: string, maxWidth = 1024, quality = 0.8): Promise<string> {
+// Resize image to max 1568px (AI APIs auto-downscale beyond this anyway)
+async function resizeImage(dataUrl: string): Promise<string> {
+  const MAX_SIZE = 1568
+  const QUALITY = 0.9
+
   return new Promise((resolve) => {
     const img = new Image()
     img.crossOrigin = "anonymous"
     img.onload = () => {
-      const canvas = document.createElement("canvas")
-      let { width, height } = img
+      const { width, height } = img
+      const longestEdge = Math.max(width, height)
 
-      // Scale down if larger than maxWidth
-      if (width > maxWidth) {
-        height = (height * maxWidth) / width
-        width = maxWidth
+      // Skip if already within limits
+      if (longestEdge <= MAX_SIZE) {
+        resolve(dataUrl)
+        return
       }
 
-      canvas.width = width
-      canvas.height = height
+      // Scale down to fit within MAX_SIZE
+      const scale = MAX_SIZE / longestEdge
+      const newWidth = Math.round(width * scale)
+      const newHeight = Math.round(height * scale)
+
+      const canvas = document.createElement("canvas")
+      canvas.width = newWidth
+      canvas.height = newHeight
       const ctx = canvas.getContext("2d")!
-      ctx.drawImage(img, 0, 0, width, height)
-      resolve(canvas.toDataURL("image/jpeg", quality))
+      ctx.drawImage(img, 0, 0, newWidth, newHeight)
+      resolve(canvas.toDataURL("image/jpeg", QUALITY))
     }
-    img.onerror = () => resolve(dataUrl) // Fallback to original
+    img.onerror = () => resolve(dataUrl)
     img.src = dataUrl
   })
 }
@@ -378,7 +387,7 @@ export function RoomDesigner() {
 
   const handleRoomUpload = useCallback(async (imageUrl: string, filename?: string) => {
     // Compress image on upload to keep canvas fast and avoid API limits
-    const compressed = await compressImage(imageUrl, 1200, 0.9)
+    const compressed = await resizeImage(imageUrl)
 
     const img = new Image()
     img.crossOrigin = "anonymous"
@@ -450,7 +459,7 @@ export function RoomDesigner() {
     const itemId = `${item.id}-${Date.now()}`
 
     // Compress furniture image
-    const compressed = await compressImage(item.image, 512, 0.85)
+    const compressed = await resizeImage(item.image)
 
     const img = new Image()
     img.crossOrigin = "anonymous"
