@@ -1,5 +1,4 @@
 import { generateText, experimental_generateImage } from "ai"
-import { gateway } from "@ai-sdk/gateway"
 
 type Pin = {
   id: string
@@ -112,10 +111,12 @@ export async function POST(req: Request) {
 
     if (hasMarkers) {
       // Build narrative description of what to place
-      const placements = markers.map((m) => {
-        const name = m.objectName || "Object"
-        return `Take the ${name} from Reference image [${m.referenceNumber}] and place it exactly where you see the marker labeled "${m.referenceNumber}: ${name}" on the room photo.`
-      }).join(" ")
+      const placements = markers
+        .map((m) => {
+          const name = m.objectName || "Object"
+          return `Take the ${name} from Reference image [${m.referenceNumber}] and place it exactly where you see the marker labeled "${m.referenceNumber}: ${name}" on the room photo.`
+        })
+        .join(" ")
 
       imagePrompt = `You are compositing objects into a photograph. I'm giving you a room photo with markers drawn on it, plus separate reference images showing the objects to add.
 
@@ -185,7 +186,7 @@ Generate a photorealistic combined image with the SAME dimensions as the base im
     if (isImageOnlyModel(model)) {
       // Use generateImage for FLUX and Imagen models
       const result = await experimental_generateImage({
-        model: gateway(model),
+        model: model,
         prompt: imagePrompt,
       })
 
@@ -230,7 +231,7 @@ Generate a photorealistic combined image with the SAME dimensions as the base im
       }
 
       const result = await generateText({
-        model: gateway(model),
+        model: model,
         messages: [
           {
             role: "user",

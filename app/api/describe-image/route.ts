@@ -1,5 +1,4 @@
 import { generateText } from "ai"
-import { gateway } from "@ai-sdk/gateway"
 
 export async function POST(req: Request) {
   const { image, filename } = (await req.json()) as {
@@ -23,7 +22,7 @@ export async function POST(req: Request) {
 
   try {
     const result = await generateText({
-      model: gateway("openai/gpt-4.1-mini"),
+      model: "openai/gpt-4o-mini",
       messages: [
         {
           role: "user",
