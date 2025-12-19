@@ -1,4 +1,5 @@
 import { generateText, experimental_generateImage } from "ai"
+import { gateway } from "@ai-sdk/gateway"
 
 type Pin = {
   id: string
@@ -6,7 +7,7 @@ type Pin = {
   x: number
   y: number
   type: "pin"
-  color: string
+  objectName?: string
 }
 
 type Lasso = {
@@ -14,7 +15,7 @@ type Lasso = {
   referenceNumber: number
   points: { x: number; y: number }[]
   type: "lasso"
-  color: string
+  objectName?: string
 }
 
 type Marker = Pin | Lasso
@@ -23,6 +24,7 @@ type ImageData = {
   role: "base" | "reference"
   data: string
   referenceNumber?: number
+  name?: string
 }
 
 function parseDataUrl(dataUrl: string): { base64: string; mediaType: string } {
@@ -34,14 +36,12 @@ function parseDataUrl(dataUrl: string): { base64: string; mediaType: string } {
 }
 
 function describeMarker(marker: Marker): string {
+  const name = marker.objectName || "Object"
+  const ref = marker.referenceNumber
   if (marker.type === "pin") {
-    return `- Reference #${marker.referenceNumber}: Place at position (${Math.round(marker.x)}% from left, ${Math.round(marker.y)}% from top)`
+    return `- Marker "${ref}: ${name}" → Take the object from Reference image [${ref}] and place it at this marker`
   } else if (marker.type === "lasso" && marker.points.length > 2) {
-    const minX = Math.round(Math.min(...marker.points.map((p) => p.x)))
-    const maxX = Math.round(Math.max(...marker.points.map((p) => p.x)))
-    const minY = Math.round(Math.min(...marker.points.map((p) => p.y)))
-    const maxY = Math.round(Math.max(...marker.points.map((p) => p.y)))
-    return `- Reference #${marker.referenceNumber}: Fill the drawn area from (${minX}%-${maxX}% horizontal, ${minY}%-${maxY}% vertical) with this object`
+    return `- Marker "${ref}: ${name}" → Take the object from Reference image [${ref}] and fill the outlined area`
   }
   return ""
 }
@@ -96,49 +96,60 @@ export async function POST(req: Request) {
   const referenceImages = images.filter((img) => img.role === "reference")
 
   if (hasBase && referenceCount > 0) {
-    const markerDescriptions = markers
+    const hasMarkers = markers.length > 0
+
+    // Build object list from reference images - match marker numbers
+    const objectList = referenceImages
+      .sort((a, b) => (a.referenceNumber || 0) - (b.referenceNumber || 0))
+      .map((img, idx) => `- Reference image [${img.referenceNumber || idx + 1}]: ${img.name || "Object"}`)
+      .join("\n")
+
+    // Build marker instructions
+    const markerInstructions = markers
       .map((marker) => describeMarker(marker))
       .filter(Boolean)
       .join("\n")
 
-    imagePrompt = `You are an expert image compositor. Your task is to ADD objects to an existing image WITHOUT changing anything else.
+    if (hasMarkers) {
+      // Build narrative description of what to place
+      const placements = markers.map((m) => {
+        const name = m.objectName || "Object"
+        return `Take the ${name} from Reference image [${m.referenceNumber}] and place it exactly where you see the marker labeled "${m.referenceNumber}: ${name}" on the room photo.`
+      }).join(" ")
 
-INPUT:
-1. BASE IMAGE: The original image with position markers (circles with numbers)
-2. ${referenceCount} REFERENCE IMAGE(s): Objects to add to the scene
+      imagePrompt = `You are compositing objects into a photograph. I'm giving you a room photo with markers drawn on it, plus separate reference images showing the objects to add.
 
-CRITICAL - PRESERVE THE BASE IMAGE EXACTLY:
-- The output MUST be the EXACT same image as the base input
-- Same composition, same background, same everything
-- The ONLY change should be the added objects from the references
-- DO NOT crop, resize, or change the aspect ratio
-- DO NOT modify colors, lighting, or any existing elements
-- The base image dimensions are ${baseWidth}x${baseHeight} pixels - OUTPUT MUST MATCH THIS EXACTLY
+The first image is the room. Look carefully - you'll see numbered markers drawn on it (black circles with labels like "1: Woman in white dress"). These markers show exactly where each object should be placed.
 
-UNDERSTANDING THE MARKERS:
-The base image has numbered circles or outlined areas. These tell you WHERE to place objects:
-- A numbered CIRCLE (pin) = place that reference object centered at that exact point
-- A numbered OUTLINED AREA (lasso) = scale and place that reference object to fill that region
+${objectList.replace(/^- /gm, "").replace(/Reference image \[(\d+)\]/g, "Reference image [$1] shows the")}
 
-MARKER POSITIONS:
-${markerDescriptions || "No specific markers - use natural placement"}
+Your task: ${placements}
 
-ABSOLUTE REQUIREMENTS:
-1. **REMOVE ALL MARKERS**: The circles and numbers are instructions - they must NOT appear in your output
-2. **EXACT BASE REPRODUCTION**: The output must be pixel-perfect identical to the base, except with objects added
-3. **SEAMLESS OBJECT INTEGRATION**: 
-   - Remove backgrounds from reference objects
-   - Match perspective and scale to the scene
-   - Add natural shadows under objects
-   - Blend edges seamlessly
-4. **NO CROPPING OR AR CHANGE**: Output dimensions must match input base image exactly
+Cut out each object cleanly from its reference image, removing the background. Then paste it into the room at the marker position, matching the room's perspective and lighting. Add natural shadows beneath each object.
 
-STYLE: ${styleDescriptions[settings?.style] || styleDescriptions.photorealistic}
-${lightingInstruction}
+${prompt ? `The user also asked: "${prompt}"` : ""}
 
-${prompt ? `ADDITIONAL INSTRUCTIONS: ${prompt}` : ""}
+Keep every single pixel of the room identical - the walls, floor, ceiling, existing furniture, lighting, and shadows must stay exactly the same. The only change should be the new objects appearing at the marker positions. ${prompt ? "Unless the user's instructions above specifically ask to modify something existing." : ""}
 
-Generate the base image with objects seamlessly added at the marked positions. The output must have NO markers visible and must be the EXACT same dimensions as the input.`
+Remove the marker labels from the final image - they were just placement guides.
+
+Output the composite at ${baseWidth}x${baseHeight} pixels.`
+    } else {
+      // No markers - place objects naturally
+      imagePrompt = `You are compositing objects into a photograph. I'm giving you a room photo plus separate reference images showing objects to add.
+
+The first image is the room. The other images show objects to add to the scene.
+
+${objectList.replace(/^- /gm, "").replace(/Reference image \[(\d+)\]/g, "Reference image [$1] shows a")}
+
+${prompt ? `The user wants: "${prompt}"` : "Add the objects naturally into the room where they fit best."}
+
+Cut out each object cleanly from its reference image, removing the background. Place them in the room at natural positions, matching the room's perspective and lighting. Add natural shadows beneath each object.
+
+Keep the room identical - walls, floor, ceiling, existing furniture, lighting stay exactly the same. Only add the new objects. ${prompt ? "Unless the user's instructions specifically ask to modify something existing." : ""}
+
+Output the composite at ${baseWidth}x${baseHeight} pixels.`
+    }
   } else if (images.length === 1) {
     imagePrompt = `You are an expert image editor.
 
@@ -174,10 +185,8 @@ Generate a photorealistic combined image with the SAME dimensions as the base im
     if (isImageOnlyModel(model)) {
       // Use generateImage for FLUX and Imagen models
       const result = await experimental_generateImage({
-        model: model,
+        model: gateway(model),
         prompt: imagePrompt,
-        // Note: Most image-only models don't support image input
-        // FLUX Kontext does support it via a different mechanism
       })
 
       if (result.image) {
@@ -221,7 +230,7 @@ Generate a photorealistic combined image with the SAME dimensions as the base im
       }
 
       const result = await generateText({
-        model: model,
+        model: gateway(model),
         messages: [
           {
             role: "user",
@@ -256,7 +265,22 @@ Generate a photorealistic combined image with the SAME dimensions as the base im
     }
   } catch (error) {
     console.error("Generation error:", error)
-    const errorMessage = error instanceof Error ? error.message : "Failed to generate image"
-    return Response.json({ success: false, error: errorMessage }, { status: 500 })
+
+    let msg = "Something went wrong"
+
+    if (error instanceof Error) {
+      const e = error.message.toLowerCase()
+      if (e.includes("payload") || e.includes("too large") || e.includes("413")) {
+        msg = "Images too large"
+      } else if (e.includes("gateway") || e.includes("502") || e.includes("503")) {
+        msg = "AI busy, try again"
+      } else if (e.includes("rate") || e.includes("429")) {
+        msg = "Too fast, wait a bit"
+      } else if (e.includes("timeout")) {
+        msg = "Timed out"
+      }
+    }
+
+    return Response.json({ success: false, error: msg }, { status: 500 })
   }
 }
