@@ -34,15 +34,34 @@ function parseDataUrl(dataUrl: string): { base64: string; mediaType: string } {
   return { mediaType: "image/png", base64: dataUrl }
 }
 
-function describeMarker(marker: Marker): string {
-  const name = marker.objectName || "Object"
-  const ref = marker.referenceNumber
-  if (marker.type === "pin") {
-    return `- Marker "${ref}: ${name}" → Take the object from Reference image [${ref}] and place it at this marker`
-  } else if (marker.type === "lasso" && marker.points.length > 2) {
-    return `- Marker "${ref}: ${name}" → Take the object from Reference image [${ref}] and fill the outlined area`
+// Convert x/y percentages to natural language position description
+function describePosition(x: number, y: number): string {
+  // Horizontal position
+  let horizontal: string
+  if (x < 25) horizontal = "far left"
+  else if (x < 40) horizontal = "left"
+  else if (x < 60) horizontal = "center"
+  else if (x < 75) horizontal = "right"
+  else horizontal = "far right"
+
+  // Vertical position
+  let vertical: string
+  if (y < 25) vertical = "top"
+  else if (y < 40) vertical = "upper"
+  else if (y < 60) vertical = "middle"
+  else if (y < 75) vertical = "lower"
+  else vertical = "bottom"
+
+  // Combine into natural description
+  if (horizontal === "center" && vertical === "middle") {
+    return "in the center of the room"
+  } else if (horizontal === "center") {
+    return `in the ${vertical} center area`
+  } else if (vertical === "middle") {
+    return `on the ${horizontal} side`
+  } else {
+    return `in the ${vertical}-${horizontal} area`
   }
-  return ""
 }
 
 function isImageOnlyModel(model: string): boolean {
@@ -61,12 +80,12 @@ export async function POST(req: Request) {
     referenceCount: number
     markers: Marker[]
     prompt: string
-    settings: { style: string; lighting: string; model: string }
+    settings: { style: string; lighting: string; model: string; resolution?: string; aspectRatio?: string }
     baseWidth: number
     baseHeight: number
   }
 
-  const model = settings?.model || "google/gemini-3-pro-image-preview"
+  const model = settings?.model || "google/gemini-3-pro-image"
 
   const styleDescriptions: Record<string, string> = {
     photorealistic: "highly photorealistic with accurate textures and materials",
@@ -94,92 +113,81 @@ export async function POST(req: Request) {
   const baseImage = images.find((img) => img.role === "base")
   const referenceImages = images.filter((img) => img.role === "reference")
 
-  if (hasBase && referenceCount > 0) {
-    const hasMarkers = markers.length > 0
+  // Room description from AI analysis
+  const roomDescription = baseImage?.name || "room"
 
-    // Build object list from reference images - match marker numbers
+  const styleDesc = styleDescriptions[settings?.style] || styleDescriptions.photorealistic
+
+  if (hasBase && referenceCount > 0) {
+    // CASE: Base image + reference images (with or without markers)
+
+    // Build object list with natural language placement descriptions
     const objectList = referenceImages
       .sort((a, b) => (a.referenceNumber || 0) - (b.referenceNumber || 0))
-      .map((img, idx) => `- Reference image [${img.referenceNumber || idx + 1}]: ${img.name || "Object"}`)
+      .map((img) => {
+        const refNum = img.referenceNumber || 0
+        const marker = markers.find(m => m.referenceNumber === refNum)
+        let position = ""
+        if (marker && marker.type === "pin") {
+          position = ` → place it ${describePosition(marker.x, marker.y)}`
+        }
+        return `[${refNum}] ${img.name || "Object"}${position}`
+      })
       .join("\n")
 
-    // Build marker instructions
-    const markerInstructions = markers
-      .map((marker) => describeMarker(marker))
-      .filter(Boolean)
-      .join("\n")
+    imagePrompt = `Edit this room photo by adding furniture from the reference images.
 
-    if (hasMarkers) {
-      // Build narrative description of what to place
-      const placements = markers
-        .map((m) => {
-          const name = m.objectName || "Object"
-          return `Take the ${name} from Reference image [${m.referenceNumber}] and place it exactly where you see the marker labeled "${m.referenceNumber}: ${name}" on the room photo.`
-        })
-        .join(" ")
+ROOM: ${roomDescription}
 
-      imagePrompt = `You are compositing objects into a photograph. I'm giving you a room photo with markers drawn on it, plus separate reference images showing the objects to add.
+OBJECTS TO ADD:
+${objectList}
 
-The first image is the room. Look carefully - you'll see numbered markers drawn on it (black circles with labels like "1: Woman in white dress"). These markers show exactly where each object should be placed.
+USER REQUEST: ${prompt || "Add the reference objects naturally into the room."}
 
-${objectList.replace(/^- /gm, "").replace(/Reference image \[(\d+)\]/g, "Reference image [$1] shows the")}
+REQUIREMENTS:
+- Add each object at its specified location in the room
+- Match the room's perspective, scale, lighting, and shadows perfectly
+- Objects should look naturally placed, as if photographed in the room
+- ${prompt?.toLowerCase().includes("remove") ? "Remove any elements the user asked to remove" : "Keep all existing furniture and decor"}
+- Output dimensions: ${baseWidth}x${baseHeight} pixels
+- Style: ${styleDesc}
 
-Your task: ${placements}
+Generate the edited room image.`
 
-Cut out each object cleanly from its reference image, removing the background. Then paste it into the room at the marker position, matching the room's perspective and lighting. Add natural shadows beneath each object.
+  } else if (images.length === 1 && baseImage) {
+    // CASE: Single image edit (remove, modify, transform - no references)
+    imagePrompt = `Edit this room photo.
 
-${prompt ? `The user also asked: "${prompt}"` : ""}
-
-Keep every single pixel of the room identical - the walls, floor, ceiling, existing furniture, lighting, and shadows must stay exactly the same. The only change should be the new objects appearing at the marker positions. ${prompt ? "Unless the user's instructions above specifically ask to modify something existing." : ""}
-
-Remove the marker labels from the final image - they were just placement guides.
-
-Output the composite at ${baseWidth}x${baseHeight} pixels.`
-    } else {
-      // No markers - place objects naturally
-      imagePrompt = `You are compositing objects into a photograph. I'm giving you a room photo plus separate reference images showing objects to add.
-
-The first image is the room. The other images show objects to add to the scene.
-
-${objectList.replace(/^- /gm, "").replace(/Reference image \[(\d+)\]/g, "Reference image [$1] shows a")}
-
-${prompt ? `The user wants: "${prompt}"` : "Add the objects naturally into the room where they fit best."}
-
-Cut out each object cleanly from its reference image, removing the background. Place them in the room at natural positions, matching the room's perspective and lighting. Add natural shadows beneath each object.
-
-Keep the room identical - walls, floor, ceiling, existing furniture, lighting stay exactly the same. Only add the new objects. ${prompt ? "Unless the user's instructions specifically ask to modify something existing." : ""}
-
-Output the composite at ${baseWidth}x${baseHeight} pixels.`
-    }
-  } else if (images.length === 1) {
-    imagePrompt = `You are an expert image editor.
+ROOM: ${roomDescription}
 
 USER REQUEST: ${prompt}
 
-CRITICAL REQUIREMENTS:
-1. REPLICATE THE EXACT IMAGE: Start with an exact copy of the input image
-2. APPLY ONLY THE USER'S REQUEST: Make ONLY the changes specified above
-3. PRESERVE EVERYTHING ELSE: Any element not mentioned should remain IDENTICAL
-4. SAME DIMENSIONS: Output must have the exact same dimensions as the input (${baseWidth}x${baseHeight} pixels)
-5. PHOTOREALISTIC OUTPUT: The result must look like a real photograph
+RULES:
+- Make ONLY the changes requested by the user
+- If user asks to REMOVE something: cleanly remove it and fill the area naturally with what would logically be behind it (wall, floor, etc.)
+- If user asks to CHANGE something: modify only that element
+- Keep everything else EXACTLY the same
+- Maintain photorealistic quality
+- Output dimensions: ${baseWidth}x${baseHeight} pixels
+- Style: ${styleDesc}
 
-STYLE: ${styleDescriptions[settings?.style] || styleDescriptions.photorealistic}
-${lightingInstruction}
+Generate the edited image.`
 
-Generate a high-quality image based on the user's specific request. DO NOT change the dimensions or aspect ratio.`
   } else {
-    imagePrompt = `You are an expert interior design AI. Combine the provided images into one cohesive interior design scene.
+    // CASE: Multiple images without clear base (combine them)
+    imagePrompt = `Combine these images into one cohesive interior design scene.
 
-The first image should be the main room/background. Integrate objects from other images naturally.
+Use the first image as the main room/background. Integrate objects from other images naturally.
 
-CRITICAL: Maintain the same dimensions as the first (base) image: ${baseWidth}x${baseHeight} pixels.
+${prompt ? `USER REQUEST: ${prompt}` : ""}
 
-STYLE: ${styleDescriptions[settings?.style] || styleDescriptions.photorealistic}
-${lightingInstruction}
+RULES:
+- Create a unified, realistic composition
+- Match lighting and perspective across all elements
+- Output dimensions: ${baseWidth}x${baseHeight} pixels
+- Style: ${styleDesc}
 
-${prompt ? `USER INSTRUCTIONS: ${prompt}` : ""}
-
-Generate a photorealistic combined image with the SAME dimensions as the base image.`
+Generate the combined image.`
   }
 
   try {
@@ -238,15 +246,133 @@ Generate a photorealistic combined image with the SAME dimensions as the base im
             content,
           },
         ],
+        providerOptions: {
+          google: {
+            responseModalities: ["TEXT", "IMAGE"],
+            ...(settings?.resolution && { sampleImageSize: settings.resolution }),
+            ...(settings?.aspectRatio && settings.aspectRatio !== "auto" && { aspectRatio: settings.aspectRatio }),
+          },
+        },
       })
 
-      const generatedImages = []
+      // Debug: Log full result structure
+      console.log("Generation result:", {
+        model,
+        text: result.text?.slice(0, 200),
+        filesCount: result.files?.length || 0,
+        fileTypes: result.files?.map(f => f.mediaType) || [],
+        hasFiles: !!result.files,
+        resultKeys: Object.keys(result),
+      })
+
+      // Also log steps if present (for newer AI SDK versions)
+      if ("steps" in result) {
+        const steps = (result as { steps?: Array<{
+          content?: unknown
+          files?: unknown[]
+          finishReason?: string
+          warnings?: unknown[]
+          response?: { headers?: Record<string, string> }
+        }> }).steps
+        console.log("Steps found:", steps?.length)
+        if (steps?.[0]) {
+          const step = steps[0]
+          console.log("First step keys:", Object.keys(step as object))
+          console.log("Finish reason:", step.finishReason)
+
+          // Check raw response for actual finish reason (safety filters show as "unknown")
+          const response = step.response as { body?: { candidates?: Array<{ finishReason?: string }> } } | undefined
+          if (response?.body?.candidates?.[0]?.finishReason) {
+            console.log("Raw finish reason:", response.body.candidates[0].finishReason)
+          }
+
+          if (step.warnings && (step.warnings as unknown[]).length > 0) {
+            console.log("Warnings:", JSON.stringify(step.warnings, null, 2))
+          }
+          // Log content structure
+          const content = step.content
+          if (Array.isArray(content)) {
+            console.log("Step content is array with", content.length, "items")
+            content.forEach((item, i) => {
+              console.log(`Content item ${i}:`, typeof item, item && typeof item === 'object' ? Object.keys(item) : item)
+            })
+          } else {
+            console.log("Step content type:", typeof content)
+          }
+          // Check for files in step
+          if (step.files) {
+            console.log("Step has files:", step.files)
+          }
+        }
+      }
+
+      // Check for files in various possible locations
+      const generatedImages: Array<{ base64: string; mediaType: string }> = []
+
+      // Try result.files first (standard location)
       for (const file of result.files || []) {
         if (file.mediaType.startsWith("image/")) {
           generatedImages.push({
             base64: file.base64,
             mediaType: file.mediaType,
           })
+        }
+      }
+
+      // If no files found, try resolvedOutput (newer AI SDK format)
+      if (generatedImages.length === 0 && "resolvedOutput" in result) {
+        const resolved = (result as { resolvedOutput?: { files?: Array<{ base64: string; mediaType: string }> } }).resolvedOutput
+        console.log("Checking resolvedOutput, keys:", resolved ? Object.keys(resolved) : "none")
+        if (resolved?.files) {
+          for (const file of resolved.files) {
+            if (file.mediaType?.startsWith("image/")) {
+              generatedImages.push({
+                base64: file.base64,
+                mediaType: file.mediaType,
+              })
+            }
+          }
+        }
+      }
+
+      // Also check steps for images (in files or content)
+      if (generatedImages.length === 0 && "steps" in result) {
+        const steps = (result as {
+          steps?: Array<{
+            files?: Array<{ base64: string; mediaType: string }>
+            content?: Array<{ type: string; data?: string; mimeType?: string; image?: { base64: string; mimeType: string } }>
+          }>
+        }).steps
+
+        for (const step of steps || []) {
+          // Check step.files
+          for (const file of step.files || []) {
+            if (file.mediaType?.startsWith("image/")) {
+              generatedImages.push({
+                base64: file.base64,
+                mediaType: file.mediaType,
+              })
+            }
+          }
+
+          // Check step.content for image parts
+          if (Array.isArray(step.content)) {
+            for (const part of step.content) {
+              if (part.type === "image" && part.image) {
+                generatedImages.push({
+                  base64: part.image.base64,
+                  mediaType: part.image.mimeType || "image/png",
+                })
+              }
+              // Also check for inline data
+              if (part.type === "file" && part.data && part.mimeType?.startsWith("image/")) {
+                generatedImages.push({
+                  base64: part.data,
+                  mediaType: part.mimeType,
+                })
+              }
+            }
+          }
         }
       }
 
@@ -262,6 +388,11 @@ Generate a photorealistic combined image with the SAME dimensions as the base im
         success: false,
         text: result.text,
         message: "No image was generated. The model may have returned text only.",
+        debug: {
+          filesCount: result.files?.length || 0,
+          hasText: !!result.text,
+          resultKeys: Object.keys(result),
+        },
       })
     }
   } catch (error) {
