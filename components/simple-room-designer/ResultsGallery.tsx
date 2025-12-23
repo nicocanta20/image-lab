@@ -35,48 +35,31 @@ interface ResultsGalleryProps {
   compact?: boolean
 }
 
-// Elegant loading placeholder with shimmer animation
+// Elegant loading placeholder with pulse animation
 function LoadingPlaceholder({ label, compact = false }: { label: string; compact?: boolean }) {
   return (
     <div
       className={`
         relative overflow-hidden
         ${compact ? "aspect-square rounded-lg" : "aspect-square rounded-xl"}
-        bg-gradient-to-br from-sand-100 via-sand-50 to-sand-100
-        dark:from-sand-500/10 dark:via-sand-500/5 dark:to-sand-500/10
+        bg-sand-100/80 dark:bg-sand-500/10
       `}
     >
-      {/* Animated shimmer overlay */}
-      <div
-        className="absolute inset-0 -translate-x-full animate-[shimmer_1.5s_infinite]"
-        style={{
-          background: "linear-gradient(90deg, transparent, rgba(196, 101, 58, 0.08), transparent)",
-        }}
-      />
-
       {/* Content */}
       <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-        {/* Pulsing ring indicator */}
+        {/* Spinning ring */}
         <div className="relative">
-          <div className="w-10 h-10 rounded-full border-2 border-terracotta/20" />
-          <div className="absolute inset-0 w-10 h-10 rounded-full border-2 border-transparent border-t-terracotta animate-spin" />
-          {/* Inner dot */}
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-2 h-2 rounded-full bg-terracotta/60 animate-pulse" />
-          </div>
+          <div className="w-8 h-8 rounded-full border-2 border-sand-200 dark:border-sand-600" />
+          <div className="absolute inset-0 w-8 h-8 rounded-full border-2 border-transparent border-t-terracotta animate-spin" />
         </div>
 
         {/* Label */}
         {!compact && (
-          <span className="text-[11px] font-medium text-sand-400 dark:text-sand-500 tracking-wide">
+          <span className="text-[11px] font-medium text-sand-400 dark:text-sand-500">
             {label}
           </span>
         )}
       </div>
-
-      {/* Subtle corner accent */}
-      <div className="absolute top-2 left-2 w-1 h-6 rounded-full bg-terracotta/20" />
-      <div className="absolute top-2 left-2 w-6 h-1 rounded-full bg-terracotta/20" />
     </div>
   )
 }
