@@ -74,7 +74,7 @@ function supportsImageInput(model: string): boolean {
 }
 
 export async function POST(req: Request) {
-  const { images, hasBase, referenceCount, markers, prompt, settings, baseWidth, baseHeight } = (await req.json()) as {
+  const { images, hasBase, referenceCount, markers, prompt, settings, baseWidth, baseHeight, selectedObjectDescription } = (await req.json()) as {
     images: ImageData[]
     hasBase: boolean
     referenceCount: number
@@ -83,9 +83,10 @@ export async function POST(req: Request) {
     settings: { style: string; lighting: string; model: string; resolution?: string; aspectRatio?: string }
     baseWidth: number
     baseHeight: number
+    selectedObjectDescription?: string
   }
 
-  const model = settings?.model || "google/gemini-3-pro-image"
+  const model = settings?.model || "google/gemini-2.5-flash-image"
 
   const styleDescriptions: Record<string, string> = {
     photorealistic: "highly photorealistic with accurate textures and materials",
@@ -126,12 +127,19 @@ export async function POST(req: Request) {
       .sort((a, b) => (a.referenceNumber || 0) - (b.referenceNumber || 0))
       .map((img) => {
         const refNum = img.referenceNumber || 0
-        const marker = markers.find(m => m.referenceNumber === refNum)
-        let position = ""
-        if (marker && marker.type === "pin") {
-          position = ` → place it ${describePosition(marker.x, marker.y)}`
+        // Get ALL pin markers for this reference (user may want multiple copies)
+        const refMarkers = markers.filter((m): m is Pin => m.referenceNumber === refNum && m.type === "pin")
+
+        let placementInfo = ""
+        if (refMarkers.length === 1) {
+          placementInfo = ` → place it ${describePosition(refMarkers[0].x, refMarkers[0].y)}`
+        } else if (refMarkers.length > 1) {
+          // Multiple placements for same reference = user wants multiple copies
+          const positions = refMarkers.map((m, i) => `  - Copy ${i + 1}: ${describePosition(m.x, m.y)}`).join("\n")
+          placementInfo = ` → place ${refMarkers.length} copies:\n${positions}`
         }
-        return `[${refNum}] ${img.name || "Object"}${position}`
+
+        return `[${refNum}] ${img.name || "Object"}${placementInfo}`
       })
       .join("\n")
 
@@ -156,17 +164,23 @@ Generate the edited room image.`
 
   } else if (images.length === 1 && baseImage) {
     // CASE: Single image edit (remove, modify, transform - no references)
+    const targetObject = selectedObjectDescription
+      ? `"${selectedObjectDescription}"`
+      : "the selected/mentioned object"
+
     imagePrompt = `Edit this room photo.
 
 ROOM: ${roomDescription}
+${selectedObjectDescription ? `\nTARGET OBJECT: ${selectedObjectDescription} (this is what the user selected to edit)` : ""}
 
 USER REQUEST: ${prompt}
 
 RULES:
-- Make ONLY the changes requested by the user
-- If user asks to REMOVE something: cleanly remove it and fill the area naturally with what would logically be behind it (wall, floor, etc.)
-- If user asks to CHANGE something: modify only that element
-- Keep everything else EXACTLY the same
+- The user wants to modify ${targetObject}
+- Make ONLY the changes requested by the user to ${targetObject}
+- If user asks to REMOVE: cleanly remove ${targetObject} and fill the area naturally with what would logically be behind it (wall, floor, etc.)
+- If user asks to CHANGE/MODIFY: modify only ${targetObject}
+- Keep everything else EXACTLY the same - do not remove or modify any other objects
 - Maintain photorealistic quality
 - Output dimensions: ${baseWidth}x${baseHeight} pixels
 - Style: ${styleDesc}
@@ -189,6 +203,19 @@ RULES:
 
 Generate the combined image.`
   }
+
+  // Debug: Log generation inputs
+  console.log("=== GENERATION INPUT ===")
+  console.log("Model:", model)
+  console.log("User prompt:", prompt)
+  console.log("Selected object:", selectedObjectDescription || "(none)")
+  console.log("Has base:", !!baseImage)
+  console.log("Reference count:", referenceCount)
+  const pinMarkers = markers.filter((m): m is Pin => m.type === "pin")
+  console.log("Markers:", pinMarkers.length, pinMarkers.map(m => `[${m.referenceNumber}] at (${Math.round(m.x)}%, ${Math.round(m.y)}%)`).join(", ") || "(none)")
+  console.log("--- FULL IMAGE PROMPT ---")
+  console.log(imagePrompt)
+  console.log("--- END PROMPT ---")
 
   try {
     if (isImageOnlyModel(model)) {
@@ -255,56 +282,9 @@ Generate the combined image.`
         },
       })
 
-      // Debug: Log full result structure
-      console.log("Generation result:", {
-        model,
-        text: result.text?.slice(0, 200),
-        filesCount: result.files?.length || 0,
-        fileTypes: result.files?.map(f => f.mediaType) || [],
-        hasFiles: !!result.files,
-        resultKeys: Object.keys(result),
-      })
-
-      // Also log steps if present (for newer AI SDK versions)
-      if ("steps" in result) {
-        const steps = (result as { steps?: Array<{
-          content?: unknown
-          files?: unknown[]
-          finishReason?: string
-          warnings?: unknown[]
-          response?: { headers?: Record<string, string> }
-        }> }).steps
-        console.log("Steps found:", steps?.length)
-        if (steps?.[0]) {
-          const step = steps[0]
-          console.log("First step keys:", Object.keys(step as object))
-          console.log("Finish reason:", step.finishReason)
-
-          // Check raw response for actual finish reason (safety filters show as "unknown")
-          const response = step.response as { body?: { candidates?: Array<{ finishReason?: string }> } } | undefined
-          if (response?.body?.candidates?.[0]?.finishReason) {
-            console.log("Raw finish reason:", response.body.candidates[0].finishReason)
-          }
-
-          if (step.warnings && (step.warnings as unknown[]).length > 0) {
-            console.log("Warnings:", JSON.stringify(step.warnings, null, 2))
-          }
-          // Log content structure
-          const content = step.content
-          if (Array.isArray(content)) {
-            console.log("Step content is array with", content.length, "items")
-            content.forEach((item, i) => {
-              console.log(`Content item ${i}:`, typeof item, item && typeof item === 'object' ? Object.keys(item) : item)
-            })
-          } else {
-            console.log("Step content type:", typeof content)
-          }
-          // Check for files in step
-          if (step.files) {
-            console.log("Step has files:", step.files)
-          }
-        }
-      }
+      console.log("=== GENERATE-ROOM OUTPUT ===")
+      console.log("Files:", result.files?.length || 0)
+      console.log("Text:", result.text?.slice(0, 100) || "(none)")
 
       // Check for files in various possible locations
       const generatedImages: Array<{ base64: string; mediaType: string }> = []
@@ -322,7 +302,6 @@ Generate the combined image.`
       // If no files found, try resolvedOutput (newer AI SDK format)
       if (generatedImages.length === 0 && "resolvedOutput" in result) {
         const resolved = (result as { resolvedOutput?: { files?: Array<{ base64: string; mediaType: string }> } }).resolvedOutput
-        console.log("Checking resolvedOutput, keys:", resolved ? Object.keys(resolved) : "none")
         if (resolved?.files) {
           for (const file of resolved.files) {
             if (file.mediaType?.startsWith("image/")) {
@@ -387,12 +366,7 @@ Generate the combined image.`
       return Response.json({
         success: false,
         text: result.text,
-        message: "No image was generated. The model may have returned text only.",
-        debug: {
-          filesCount: result.files?.length || 0,
-          hasText: !!result.text,
-          resultKeys: Object.keys(result),
-        },
+        message: "No image was generated.",
       })
     }
   } catch (error) {
@@ -401,6 +375,7 @@ Generate the combined image.`
     let msg = "Something went wrong"
 
     if (error instanceof Error) {
+      console.error("Full error message:", error.message)
       const e = error.message.toLowerCase()
       if (e.includes("payload") || e.includes("too large") || e.includes("413")) {
         msg = "Images too large"
@@ -410,6 +385,9 @@ Generate the combined image.`
         msg = "Too fast, wait a bit"
       } else if (e.includes("timeout")) {
         msg = "Timed out"
+      } else {
+        // Include part of the actual error for debugging
+        msg = error.message.slice(0, 100)
       }
     }
 

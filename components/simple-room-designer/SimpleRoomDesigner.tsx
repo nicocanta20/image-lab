@@ -40,17 +40,21 @@ export type ReferenceImage = {
 
 export type GenerationContext = {
   prompt: string
-  questions?: Array<{
-    question: string
-    header?: string
-    answer: string | string[]
-  }>
+  clarifications?: string[]
   settings: {
     style: string
     lighting: string
   }
   roomDescription?: string
   references?: Array<{ name: string; referenceNumber: number }>
+}
+
+export type UpscaleMetadata = {
+  originalWidth: number
+  originalHeight: number
+  upscaledWidth: number
+  upscaledHeight: number
+  scaleFactor: number
 }
 
 export type GeneratedResult = {
@@ -60,6 +64,7 @@ export type GeneratedResult = {
   isProcessing?: boolean
   isFavorite?: boolean
   context?: GenerationContext
+  upscaleInfo?: UpscaleMetadata
 }
 
 export type GenerationSettings = {
@@ -70,6 +75,33 @@ export type GenerationSettings = {
 }
 
 // Utility functions
+async function compositeImages(baseUrl: string, overlayUrl: string): Promise<string> {
+  return new Promise((resolve) => {
+    const baseImg = new Image()
+    baseImg.crossOrigin = "anonymous"
+    baseImg.onload = () => {
+      const overlayImg = new Image()
+      overlayImg.crossOrigin = "anonymous"
+      overlayImg.onload = () => {
+        const canvas = document.createElement("canvas")
+        canvas.width = baseImg.width
+        canvas.height = baseImg.height
+        const ctx = canvas.getContext("2d")!
+
+        // Draw base image
+        ctx.drawImage(baseImg, 0, 0)
+
+        // Draw overlay on top (selection lasso)
+        ctx.drawImage(overlayImg, 0, 0, baseImg.width, baseImg.height)
+
+        resolve(canvas.toDataURL("image/jpeg", 0.9))
+      }
+      overlayImg.src = overlayUrl
+    }
+    baseImg.src = baseUrl
+  })
+}
+
 async function resizeImage(imageUrl: string): Promise<string> {
   const MAX_SIZE = 1568
   const QUALITY = 0.9
@@ -133,7 +165,16 @@ export function SimpleRoomDesigner() {
   const [pendingQuestions, setPendingQuestions] = useState<Question[] | null>(null)
   const [processingItems, setProcessingItems] = useState<Set<string>>(new Set())
 
+  // Selection/inpainting state - only need overlay (Gemini sees it visually)
+  const [isSelectionMode, setIsSelectionMode] = useState(false)
+  const [selectionOverlay, setSelectionOverlay] = useState<string | null>(null)
+  const [selectedObjectDescription, setSelectedObjectDescription] = useState<string | null>(null)
+
+  // Derived state
+  const hasSelection = selectionOverlay !== null
+
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const pendingContextRef = useRef<{ objectDescription: string | null; placementDescription: string | null; imageWithSelection: string | null }>({ objectDescription: null, placementDescription: null, imageWithSelection: null })
 
   // Handle room image upload
   const handleRoomUpload = useCallback(async (file: File) => {
@@ -221,6 +262,28 @@ export function SimpleRoomDesigner() {
     setMarkers((prev) => prev.filter((m) => m.id !== id))
   }, [])
 
+  // Selection mode handlers
+  const handleSelectionModeToggle = useCallback(() => {
+    setIsSelectionMode((prev) => !prev)
+    // Cancel placement mode when entering selection mode
+    if (!isSelectionMode) {
+      setActiveReferenceForPlacement(null)
+    }
+  }, [isSelectionMode])
+
+  const handleSelectionChange = useCallback((_has: boolean, overlayDataUrl: string | null) => {
+    setSelectionOverlay(overlayDataUrl)
+    // Auto-exit selection mode once a selection is made
+    if (overlayDataUrl) {
+      setIsSelectionMode(false)
+    }
+  }, [])
+
+  const handleClearSelection = useCallback(() => {
+    setSelectionOverlay(null)
+    setSelectedObjectDescription(null)
+  }, [])
+
   // Render markers onto base image for API
   const renderBaseWithMarkers = useCallback(async (): Promise<string> => {
     if (!baseImage) return ""
@@ -260,13 +323,16 @@ export function SimpleRoomDesigner() {
     })
   }, [baseImage, markers, references])
 
-  // Determine generation mode
-  const generationMode = baseImage
-    ? (references.length > 0 ? "furniture" : "modify")
-    : "create"
+  // Determine which API route to use based on available inputs
+  // Each mode maps directly to an API: create → /api/create-image, edit → /api/edit-image, add-references → /api/add-references
+  const generationMode: "create" | "edit" | "add-references" = !baseImage
+    ? "create"           // No room uploaded → generate from scratch
+    : references.length > 0
+      ? "add-references" // Room + reference images → add items to room
+      : "edit"           // Room only → edit/modify the room
 
-  // Can generate if: has prompt (for create/modify) OR has references (for furniture mode)
-  const canGenerate = generationMode === "furniture"
+  // Can generate if: has prompt (for create/edit) OR has references (for add-references mode)
+  const canGenerate = generationMode === "add-references"
     ? references.length > 0
     : prompt.trim().length > 0
 
@@ -295,56 +361,80 @@ export function SimpleRoomDesigner() {
 
   // Actual generation call
   const executeGeneration = useCallback(async (
-    questionAnswers?: Array<{ question: string; header?: string; answer: string | string[] }>
+    naturalPhrases?: string[],
+    objectDescription?: string | null,
+    placementDescription?: string | null,
+    imageWithSelection?: string | null
   ) => {
     setIsGenerating(true)
 
     try {
-      const images = await buildImagesArray()
+      // Build the final prompt - append natural phrases if any
+      let finalPrompt = prompt
+      if (naturalPhrases && naturalPhrases.length > 0) {
+        finalPrompt = `${finalPrompt}. ${naturalPhrases.join(". ")}`
+      }
 
-      // Build extra context from Q&A for the prompt
-      const extraContext = questionAnswers
-        ?.map(qa => {
-          const answerText = Array.isArray(qa.answer) ? qa.answer.join(", ") : qa.answer
-          if (qa.header?.toLowerCase().includes("placement")) {
-            return `Place the item: ${answerText}`
-          }
-          return answerText
-        })
-        .join(". ")
+      // Each mode: endpoint + payload builder
+      const apiConfig = {
+        "create": {
+          endpoint: "/api/create-image",
+          body: {
+            prompt: finalPrompt,
+            references: references.length > 0 ? references.map(ref => ({
+              role: "reference",
+              data: ref.src,
+              name: ref.name,
+              referenceNumber: ref.referenceNumber,
+            })) : undefined,
+            settings,
+          },
+        },
+        "edit": {
+          endpoint: "/api/edit-image",
+          body: {
+            baseImage: { role: "base", data: baseImage?.src, name: baseImage?.name },
+            imageWithSelection, // Image with lasso overlay so model can SEE the selection
+            prompt: finalPrompt,
+            selectedObjectDescription: objectDescription,
+            settings,
+          },
+        },
+        "add-references": {
+          endpoint: "/api/add-references",
+          body: {
+            baseImage: { role: "base", data: baseImage?.src, name: baseImage?.name },
+            references: references.map(ref => ({
+              role: "reference",
+              data: ref.src,
+              name: ref.name,
+              referenceNumber: ref.referenceNumber,
+              quantity: markers.filter(m => m.referenceNumber === ref.referenceNumber).length || 1,
+            })),
+            placementDescription, // Natural language description of where to place items
+            prompt: finalPrompt,
+            settings,
+            baseWidth: baseImage?.naturalWidth,
+            baseHeight: baseImage?.naturalHeight,
+          },
+        },
+      } as const
 
-      const finalPrompt = extraContext
-        ? `${prompt}\n\nAdditional context from user:\n${extraContext}`
-        : prompt
-
-      const response = await fetch("/api/generate-room", {
+      const { endpoint, body } = apiConfig[generationMode]
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          images,
-          hasBase: !!baseImage,
-          referenceCount: references.length,
-          markers: markers.map((m) => ({
-            referenceNumber: m.referenceNumber,
-            x: m.x,
-            y: m.y,
-          })),
-          prompt: finalPrompt,
-          settings,
-          generationMode,
-          baseWidth: baseImage?.naturalWidth,
-          baseHeight: baseImage?.naturalHeight,
-        }),
+        body: JSON.stringify(body),
       })
 
       const data = await response.json()
-      console.log("API response:", data)
+      console.log(`[${generationMode}] ${endpoint}:`, data.success ? "success" : data.error)
 
       if (data.success && data.image) {
         // Build generation context for display
         const generationContext: GenerationContext = {
           prompt,
-          questions: questionAnswers,
+          clarifications: naturalPhrases,
           settings: { ...settings },
           roomDescription: baseImage?.name,
           references: references.map(r => ({ name: r.name, referenceNumber: r.referenceNumber })),
@@ -365,7 +455,7 @@ export function SimpleRoomDesigner() {
     } finally {
       setIsGenerating(false)
     }
-  }, [buildImagesArray, baseImage, references, markers, prompt, settings, generationMode])
+  }, [buildImagesArray, baseImage, references, markers, prompt, settings, generationMode, hasSelection])
 
   // Handle generation - first analyze, then maybe ask questions
   const handleGenerate = useCallback(async () => {
@@ -375,6 +465,62 @@ export function SimpleRoomDesigner() {
 
     try {
       const images = await buildImagesArray()
+
+      // If there's a selection, create a composited image showing the lasso on the room
+      let imageWithSelection: string | null = null
+      let objectDescription: string | null = null
+
+      if (hasSelection && selectionOverlay && baseImage) {
+        imageWithSelection = await compositeImages(baseImage.src, selectionOverlay)
+
+        // Identify what object is selected (quick vision call)
+        try {
+          const describeResponse = await fetch("/api/describe-selection", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ imageWithSelection }),
+          })
+          const describeData = await describeResponse.json()
+          if (describeData.success && describeData.description) {
+            objectDescription = describeData.description
+            setSelectedObjectDescription(objectDescription)
+            console.log("Selected object identified:", objectDescription)
+          }
+        } catch (e) {
+          console.error("Failed to identify selection:", e)
+        }
+      }
+
+      // If there are markers, create image showing marker positions and get placement description
+      let imageWithMarkers: string | null = null
+      let placementDescription: string | null = null
+
+      if (markers.length > 0 && baseImage) {
+        imageWithMarkers = await renderBaseWithMarkers()
+
+        // Get natural language description of placements
+        try {
+          const placementResponse = await fetch("/api/describe-placements", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              imageWithMarkers,
+              references: references.map(r => ({
+                referenceNumber: r.referenceNumber,
+                name: r.name,
+                pinCount: markers.filter(m => m.referenceNumber === r.referenceNumber).length,
+              })),
+            }),
+          })
+          const placementData = await placementResponse.json()
+          if (placementData.success && placementData.description) {
+            placementDescription = placementData.description
+            console.log("Placement description:", placementDescription)
+          }
+        } catch (e) {
+          console.error("Failed to describe placements:", e)
+        }
+      }
 
       // Analyze the request
       const analyzeResponse = await fetch("/api/analyze-generation", {
@@ -388,9 +534,14 @@ export function SimpleRoomDesigner() {
             referenceNumber: m.referenceNumber,
             x: m.x,
             y: m.y,
+            type: "pin" as const,
           })),
           prompt,
           settings,
+          imageWithSelection, // Room + lasso overlay (presence indicates inpainting mode)
+          imageWithMarkers,   // Room + numbered markers showing placements
+          selectedObjectDescription: objectDescription, // What object is selected
+          generationMode, // create | modify | furniture
         }),
       })
 
@@ -398,13 +549,15 @@ export function SimpleRoomDesigner() {
       console.log("Analysis:", analysis)
 
       if (analysis.needsClarification && analysis.questions?.length > 0) {
-        // Show questions
+        // Show questions - store context for later
         setPendingQuestions(analysis.questions)
+        // Store descriptions for when user answers questions
+        pendingContextRef.current = { objectDescription, placementDescription, imageWithSelection }
         setIsAnalyzing(false)
       } else {
         // No questions needed, proceed to generate
         setIsAnalyzing(false)
-        await executeGeneration()
+        await executeGeneration(undefined, objectDescription, placementDescription, imageWithSelection)
       }
     } catch (error) {
       console.error("Analysis error:", error)
@@ -412,29 +565,42 @@ export function SimpleRoomDesigner() {
       setIsAnalyzing(false)
       await executeGeneration()
     }
-  }, [canGenerate, buildImagesArray, baseImage, references, markers, prompt, settings, executeGeneration])
+  }, [canGenerate, buildImagesArray, baseImage, references, markers, prompt, settings, executeGeneration, hasSelection, selectionOverlay, renderBaseWithMarkers, generationMode])
 
   // Handle question answers
   const handleQuestionAnswers = useCallback(async (answers: Record<string, string | string[]>) => {
-    // Build Q&A array for context storage
-    const questionAnswers = Object.entries(answers).map(([questionId, answer]) => {
+    // Get naturalPhrase from selected options, or use custom text directly
+    const naturalPhrases: string[] = []
+
+    for (const [questionId, answer] of Object.entries(answers)) {
       const question = pendingQuestions?.find(q => q.id === questionId)
-      return {
-        question: question?.question || questionId,
-        header: question?.header,
-        answer,
+      if (!question) continue
+
+      // Handle single or multi-select
+      const selectedValues = Array.isArray(answer) ? answer : [answer]
+      for (const value of selectedValues) {
+        // Try to find matching option by label (since we store labels, not values)
+        const option = question.options?.find(o => o.label === value)
+        if (option?.naturalPhrase) {
+          naturalPhrases.push(option.naturalPhrase)
+        } else if (value) {
+          // Custom answer - use the text directly
+          naturalPhrases.push(value)
+        }
       }
-    })
+    }
 
     setPendingQuestions(null)
-    console.log("Generation with Q&A context:", questionAnswers)
-    await executeGeneration(questionAnswers)
+    const { objectDescription, placementDescription, imageWithSelection } = pendingContextRef.current
+    console.log("Generation with natural phrases:", naturalPhrases)
+    await executeGeneration(naturalPhrases, objectDescription, placementDescription, imageWithSelection)
   }, [executeGeneration, pendingQuestions])
 
   // Handle skip questions
   const handleSkipQuestions = useCallback(async () => {
     setPendingQuestions(null)
-    await executeGeneration()
+    const { objectDescription, placementDescription, imageWithSelection } = pendingContextRef.current
+    await executeGeneration(undefined, objectDescription, placementDescription, imageWithSelection)
   }, [executeGeneration])
 
   // Use a generated result as the new base image
@@ -467,6 +633,14 @@ export function SimpleRoomDesigner() {
     setProcessingItems((prev) => new Set(prev).add(result.id))
 
     try {
+      // Get original dimensions
+      const originalDims = await new Promise<{ width: number; height: number }>((resolve) => {
+        const img = new Image()
+        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight })
+        img.onerror = () => resolve({ width: 0, height: 0 })
+        img.src = result.src
+      })
+
       const response = await fetch("/api/upscale-image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -480,6 +654,13 @@ export function SimpleRoomDesigner() {
           id: `upscaled-${Date.now()}`,
           src: data.image,
           createdAt: Date.now(),
+          upscaleInfo: {
+            originalWidth: originalDims.width,
+            originalHeight: originalDims.height,
+            upscaledWidth: data.width || originalDims.width * 4,
+            upscaledHeight: data.height || originalDims.height * 4,
+            scaleFactor: 4,
+          },
         }
         setResults((prev) => [newResult, ...prev])
       }
@@ -566,6 +747,11 @@ export function SimpleRoomDesigner() {
                 onRemoveMarker={handleRemoveMarker}
                 onCancelPlacement={() => setActiveReferenceForPlacement(null)}
                 onChangeImage={() => fileInputRef.current?.click()}
+                isSelectionMode={isSelectionMode}
+                hasSelection={hasSelection}
+                onSelectionModeToggle={handleSelectionModeToggle}
+                onSelectionChange={handleSelectionChange}
+                onClearSelection={handleClearSelection}
               />
             ) : (
               <div
@@ -628,6 +814,7 @@ export function SimpleRoomDesigner() {
           <ResultsGallery
             results={results}
             processingItems={processingItems}
+            isGenerating={isGenerating}
             onDownload={handleDownload}
             onUpscale={handleUpscale}
             onUseAsBase={handleUseAsBase}
@@ -651,6 +838,11 @@ export function SimpleRoomDesigner() {
               onRemoveMarker={handleRemoveMarker}
               onCancelPlacement={() => setActiveReferenceForPlacement(null)}
               onChangeImage={() => fileInputRef.current?.click()}
+              isSelectionMode={isSelectionMode}
+              hasSelection={hasSelection}
+              onSelectionModeToggle={handleSelectionModeToggle}
+              onSelectionChange={handleSelectionChange}
+              onClearSelection={handleClearSelection}
             />
           ) : (
             <div
@@ -728,6 +920,7 @@ export function SimpleRoomDesigner() {
             <ResultsGallery
               results={results}
               processingItems={processingItems}
+              isGenerating={isGenerating}
               onDownload={handleDownload}
               onUpscale={handleUpscale}
               onUseAsBase={handleUseAsBase}

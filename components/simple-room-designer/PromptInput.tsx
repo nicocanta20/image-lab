@@ -25,7 +25,7 @@ interface PromptInputProps {
   isGenerating: boolean
   isAnalyzing?: boolean
   canGenerate: boolean
-  generationMode: "create" | "modify" | "furniture"
+  generationMode: "create" | "edit" | "add-references"
   compact?: boolean
 }
 
@@ -109,7 +109,13 @@ export function PromptInput({
   const isLoading = isGenerating || isAnalyzing
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [isMultiline, setIsMultiline] = useState(false)
+  const [mounted, setMounted] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Prevent hydration mismatch from Radix UI generating different IDs on server vs client
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey && canGenerate && !isLoading) {
@@ -146,19 +152,20 @@ export function PromptInput({
   // Dynamic placeholder based on mode
   const placeholder = {
     create: "Describe the room you want to create...",
-    modify: "Describe changes (e.g., 'change walls to blue')...",
-    furniture: "Additional instructions (optional)...",
+    edit: "Describe changes (e.g., 'change walls to blue')...",
+    "add-references": "Additional instructions (optional)...",
   }[generationMode]
 
   // Dynamic helper text based on mode
   const helperText = {
     create: "Enter a prompt to generate a new room",
-    modify: "Enter a prompt to modify the room",
-    furniture: canGenerate ? "" : "Add furniture references to generate",
+    edit: "Enter a prompt to modify the room",
+    "add-references": canGenerate ? "" : "Add reference images to generate",
   }[generationMode]
 
   // Settings popover content (shared between layouts)
-  const settingsPopover = (
+  // Only render Popover after mount to prevent Radix ID hydration mismatch
+  const settingsPopover = mounted ? (
     <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
       <PopoverTrigger asChild>
         <button
@@ -303,6 +310,14 @@ export function PromptInput({
         </div>
       </PopoverContent>
     </Popover>
+  ) : (
+    // Placeholder button before mount to prevent layout shift
+    <button
+      className={`${compact ? "p-2" : "p-2.5"} rounded-lg text-sand-400`}
+      title="Generation settings"
+    >
+      <SlidersHorizontal className="w-4 h-4" />
+    </button>
   )
 
   // Generate button (shared)

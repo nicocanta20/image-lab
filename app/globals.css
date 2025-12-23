@@ -209,3 +209,13 @@
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+/* Shimmer animation for loading placeholders */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}

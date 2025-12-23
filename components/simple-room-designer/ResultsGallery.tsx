@@ -1,13 +1,14 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import type { GeneratedResult, GenerationContext } from "./SimpleRoomDesigner"
+import type { GeneratedResult, GenerationContext, UpscaleMetadata } from "./SimpleRoomDesigner"
 import {
   Download,
   ArrowUpFromLine,
   Trash2,
   Loader2,
   Image as ImageIcon,
+  Maximize2,
   X,
   ImagePlus,
   Heart,
@@ -25,6 +26,7 @@ function formatLabel(value: string): string {
 interface ResultsGalleryProps {
   results: GeneratedResult[]
   processingItems: Set<string>
+  isGenerating?: boolean
   onDownload: (result: GeneratedResult) => void
   onUpscale: (result: GeneratedResult) => void
   onUseAsBase: (result: GeneratedResult) => void
@@ -33,9 +35,56 @@ interface ResultsGalleryProps {
   compact?: boolean
 }
 
+// Elegant loading placeholder with shimmer animation
+function LoadingPlaceholder({ label, compact = false }: { label: string; compact?: boolean }) {
+  return (
+    <div
+      className={`
+        relative overflow-hidden
+        ${compact ? "aspect-square rounded-lg" : "aspect-square rounded-xl"}
+        bg-gradient-to-br from-sand-100 via-sand-50 to-sand-100
+        dark:from-sand-500/10 dark:via-sand-500/5 dark:to-sand-500/10
+      `}
+    >
+      {/* Animated shimmer overlay */}
+      <div
+        className="absolute inset-0 -translate-x-full animate-[shimmer_1.5s_infinite]"
+        style={{
+          background: "linear-gradient(90deg, transparent, rgba(196, 101, 58, 0.08), transparent)",
+        }}
+      />
+
+      {/* Content */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+        {/* Pulsing ring indicator */}
+        <div className="relative">
+          <div className="w-10 h-10 rounded-full border-2 border-terracotta/20" />
+          <div className="absolute inset-0 w-10 h-10 rounded-full border-2 border-transparent border-t-terracotta animate-spin" />
+          {/* Inner dot */}
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="w-2 h-2 rounded-full bg-terracotta/60 animate-pulse" />
+          </div>
+        </div>
+
+        {/* Label */}
+        {!compact && (
+          <span className="text-[11px] font-medium text-sand-400 dark:text-sand-500 tracking-wide">
+            {label}
+          </span>
+        )}
+      </div>
+
+      {/* Subtle corner accent */}
+      <div className="absolute top-2 left-2 w-1 h-6 rounded-full bg-terracotta/20" />
+      <div className="absolute top-2 left-2 w-6 h-1 rounded-full bg-terracotta/20" />
+    </div>
+  )
+}
+
 export function ResultsGallery({
   results,
   processingItems,
+  isGenerating = false,
   onDownload,
   onUpscale,
   onUseAsBase,
@@ -43,6 +92,8 @@ export function ResultsGallery({
   onToggleFavorite,
   compact = false,
 }: ResultsGalleryProps) {
+  // Count how many upscales are in progress (to show placeholders)
+  const upscaleCount = processingItems.size
   const [selectedResultId, setSelectedResultId] = useState<string | null>(null)
 
   // Derive selectedResult from results array so it stays in sync
@@ -91,10 +142,13 @@ export function ResultsGallery({
 
   // Mobile compact layout - 4 columns grid
   if (compact) {
+    const hasAnyLoading = isGenerating || upscaleCount > 0
+    const showEmptyState = results.length === 0 && !hasAnyLoading
+
     return (
       <div className="flex flex-col p-2">
         <div className="grid grid-cols-4 gap-1.5">
-            {results.length === 0 ? (
+            {showEmptyState ? (
               <div className="col-span-4 flex items-center justify-center py-6 text-sand-400 dark:text-sand-500">
                 <div className="flex flex-col items-center gap-1">
                   <ImageIcon className="w-5 h-5" />
@@ -102,28 +156,31 @@ export function ResultsGallery({
                 </div>
               </div>
             ) : (
-              results.slice(0, 8).map((result) => {
-                const isProcessing = processingItems.has(result.id)
+              <>
+                {/* Generation placeholder */}
+                {isGenerating && <LoadingPlaceholder label="Generating" compact />}
 
-                return (
-                  <div
-                    key={result.id}
-                    className="relative aspect-square rounded-lg overflow-hidden bg-sand-100 dark:bg-sand-500/10"
-                    onClick={() => setSelectedResultId(result.id)}
-                  >
-                    <img
-                      src={result.src}
-                      alt="Generated room"
-                      className="w-full h-full object-cover"
-                    />
+                {/* Upscale placeholders */}
+                {Array.from({ length: upscaleCount }).map((_, i) => (
+                  <LoadingPlaceholder key={`upscale-${i}`} label="Upscaling" compact />
+                ))}
 
-                    {isProcessing && (
-                      <div className="absolute inset-0 bg-charcoal/60 flex items-center justify-center">
-                        <Loader2 className="w-5 h-5 text-white animate-spin" />
-                      </div>
-                    )}
+                {/* Actual results - skip items being processed since they have placeholders */}
+                {results
+                  .filter((r) => !processingItems.has(r.id))
+                  .slice(0, 8 - (isGenerating ? 1 : 0) - upscaleCount)
+                  .map((result) => (
+                    <div
+                      key={result.id}
+                      className="relative aspect-square rounded-lg overflow-hidden bg-sand-100 dark:bg-sand-500/10"
+                      onClick={() => setSelectedResultId(result.id)}
+                    >
+                      <img
+                        src={result.src}
+                        alt="Generated room"
+                        className="w-full h-full object-cover"
+                      />
 
-                    {!isProcessing && (
                       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-1.5 flex gap-1">
                         <button
                           onClick={(e) => {
@@ -144,16 +201,15 @@ export function ResultsGallery({
                           <Download className="w-3 h-3" />
                         </button>
                       </div>
-                    )}
 
-                    {result.isFavorite && (
-                      <div className="absolute top-1 right-1 w-5 h-5 rounded-full bg-white/90 flex items-center justify-center">
-                        <Heart className="w-3 h-3 text-red-500 fill-current" />
-                      </div>
-                    )}
-                  </div>
-                )
-              })
+                      {result.isFavorite && (
+                        <div className="absolute top-1 right-1 w-5 h-5 rounded-full bg-white/90 flex items-center justify-center">
+                          <Heart className="w-3 h-3 text-red-500 fill-current" />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+              </>
             )}
           </div>
 
@@ -278,7 +334,7 @@ export function ResultsGallery({
 
       {/* Results Grid */}
       <div className="flex-1 overflow-y-auto px-4 pb-4">
-        {results.length === 0 ? (
+        {results.length === 0 && !isGenerating && upscaleCount === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-sand-400 dark:text-sand-500">
             <div className="w-16 h-16 rounded-2xl bg-sand-100 dark:bg-sand-500/10 flex items-center justify-center mb-4">
               <ImageIcon className="w-7 h-7" />
@@ -290,10 +346,18 @@ export function ResultsGallery({
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-3">
-            {results.map((result) => {
-              const isProcessing = processingItems.has(result.id)
+            {/* Generation placeholder */}
+            {isGenerating && <LoadingPlaceholder label="Generating..." />}
 
-              return (
+            {/* Upscale placeholders */}
+            {Array.from({ length: upscaleCount }).map((_, i) => (
+              <LoadingPlaceholder key={`upscale-${i}`} label="Upscaling..." />
+            ))}
+
+            {/* Actual results - filter out items being processed */}
+            {results
+              .filter((r) => !processingItems.has(r.id))
+              .map((result) => (
                 <div
                   key={result.id}
                   className="group relative aspect-square rounded-xl overflow-hidden bg-sand-100 dark:bg-sand-500/10 cursor-pointer"
@@ -305,60 +369,51 @@ export function ResultsGallery({
                     className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                   />
 
-                  {/* Processing overlay */}
-                  {isProcessing && (
-                    <div className="absolute inset-0 bg-charcoal/60 flex items-center justify-center">
-                      <Loader2 className="w-6 h-6 text-white animate-spin" />
-                    </div>
-                  )}
-
                   {/* Hover overlay with quick actions */}
-                  {!isProcessing && (
-                    <div className="absolute inset-0 bg-gradient-to-t from-charcoal/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                      <div className="absolute bottom-0 left-0 right-0 p-2 flex justify-center gap-1.5">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onUseAsBase(result)
-                          }}
-                          className="w-8 h-8 rounded-lg bg-terracotta/80 hover:bg-terracotta backdrop-blur-sm flex items-center justify-center text-white transition-colors"
-                          title="Use as Base"
-                        >
-                          <ImagePlus className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onDownload(result)
-                          }}
-                          className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 backdrop-blur-sm flex items-center justify-center text-white transition-colors"
-                          title="Download"
-                        >
-                          <Download className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onUpscale(result)
-                          }}
-                          className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 backdrop-blur-sm flex items-center justify-center text-white transition-colors"
-                          title="Upscale"
-                        >
-                          <ArrowUpFromLine className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onDelete(result.id)
-                          }}
-                          className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 backdrop-blur-sm flex items-center justify-center text-white transition-colors"
-                          title="Delete"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                  <div className="absolute inset-0 bg-gradient-to-t from-charcoal/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    <div className="absolute bottom-0 left-0 right-0 p-2 flex justify-center gap-1.5">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onUseAsBase(result)
+                        }}
+                        className="w-8 h-8 rounded-lg bg-terracotta/80 hover:bg-terracotta backdrop-blur-sm flex items-center justify-center text-white transition-colors"
+                        title="Use as Base"
+                      >
+                        <ImagePlus className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onDownload(result)
+                        }}
+                        className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 backdrop-blur-sm flex items-center justify-center text-white transition-colors"
+                        title="Download"
+                      >
+                        <Download className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onUpscale(result)
+                        }}
+                        className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 backdrop-blur-sm flex items-center justify-center text-white transition-colors"
+                        title="Upscale"
+                      >
+                        <ArrowUpFromLine className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onDelete(result.id)
+                        }}
+                        className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 backdrop-blur-sm flex items-center justify-center text-white transition-colors"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
-                  )}
+                  </div>
 
                   {/* Timestamp badge */}
                   <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-charcoal/60 backdrop-blur-sm text-white text-[10px] font-medium opacity-0 group-hover:opacity-100 transition-opacity select-none">
@@ -385,8 +440,8 @@ export function ResultsGallery({
                     <Heart className={`w-4 h-4 ${result.isFavorite ? "fill-current" : ""}`} />
                   </button>
                 </div>
-              )
-            })}
+              ))}
+
           </div>
         )}
       </div>
@@ -529,6 +584,52 @@ export function ResultsGallery({
                         </span>
                         <span className="px-2 py-0.5 text-[11px] bg-white/5 text-sand-300 rounded">
                           {formatLabel(selectedResult.context.settings.lighting)}
+                        </span>
+                      </div>
+                    </div>
+                  </>
+                ) : selectedResult.upscaleInfo ? (
+                  <>
+                    {/* Upscale Badge */}
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/10 text-emerald-400 rounded-full">
+                        <Maximize2 className="w-3 h-3" />
+                        <span className="text-[11px] font-medium">Upscaled {selectedResult.upscaleInfo.scaleFactor}×</span>
+                      </div>
+                    </div>
+
+                    {/* Resolution Comparison */}
+                    <div className="space-y-3">
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-sand-500">Original</span>
+                        <p className="text-[13px] text-sand-400">
+                          {selectedResult.upscaleInfo.originalWidth} × {selectedResult.upscaleInfo.originalHeight} px
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 text-sand-500">
+                        <div className="flex-1 h-px bg-white/10" />
+                        <ArrowUpFromLine className="w-3 h-3" />
+                        <div className="flex-1 h-px bg-white/10" />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-sand-500">Upscaled</span>
+                        <p className="text-[15px] font-medium text-sand-100">
+                          {selectedResult.upscaleInfo.upscaledWidth} × {selectedResult.upscaleInfo.upscaledHeight} px
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Enhancement Info */}
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-sand-500">Enhancement</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="px-2 py-0.5 text-[11px] bg-white/5 text-sand-300 rounded">
+                          AuraSR v2
+                        </span>
+                        <span className="px-2 py-0.5 text-[11px] bg-white/5 text-sand-300 rounded">
+                          AI Enhanced
                         </span>
                       </div>
                     </div>

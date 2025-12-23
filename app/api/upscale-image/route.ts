@@ -4,7 +4,7 @@ fal.config({
   credentials: process.env.FAL_KEY,
 })
 
-type EsrganOutput = {
+type AuraSROutput = {
   image: {
     url: string
     content_type: string
@@ -47,11 +47,13 @@ export async function POST(req: Request) {
       return Response.json({ success: false, error: "Invalid image format" }, { status: 400 })
     }
 
-    // Now call ESRGAN with the image URL
-    const result = await fal.subscribe<{ image_url: string; scale: number }, EsrganOutput>("fal-ai/esrgan", {
+    // Use AuraSR v2 - best quality 4x upscaler, handles compressed images well
+    const result = await fal.subscribe<{ image_url: string; upscaling_factor: number; overlapping_tiles: boolean; checkpoint: string }, AuraSROutput>("fal-ai/aura-sr", {
       input: {
         image_url: imageUrl,
-        scale: 2,
+        upscaling_factor: 4,
+        overlapping_tiles: true, // Better quality, eliminates seams
+        checkpoint: "v2", // V2 handles real-world images better
       },
     })
 

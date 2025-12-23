@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useRef, useState, useEffect } from "react"
 import { MAX_REFERENCES, type Marker, type ReferenceImage } from "./SimpleRoomDesigner"
 import { FurnitureCatalog } from "./FurnitureCatalog"
 import { Plus, MoreHorizontal, Trash2, X, AtSign } from "lucide-react"
@@ -36,6 +36,12 @@ export function ReferencePanel({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+  const [mounted, setMounted] = useState(false)
+
+  // Prevent hydration mismatch from Radix UI generating different IDs on server vs client
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -293,53 +299,59 @@ export function ReferencePanel({
                 )}
 
                 {/* ⋮ Menu for Remove only */}
-                <Popover
-                  open={openMenuId === ref.id}
-                  onOpenChange={(open) => setOpenMenuId(open ? ref.id : null)}
-                >
-                  <PopoverTrigger asChild>
-                    <button
-                      className="
-                        p-1 rounded text-sand-400
-                        opacity-0 group-hover:opacity-100
-                        hover:text-charcoal dark:hover:text-sand-100
-                        hover:bg-sand-200 dark:hover:bg-sand-500/20
-                        transition-all duration-150
-                      "
-                    >
-                      <MoreHorizontal className="w-3.5 h-3.5" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    side="left"
-                    align="start"
-                    sideOffset={4}
-                    className="w-28 p-1 border-sand-200 dark:border-sand-500/30 bg-white dark:bg-[#1f1e1d] shadow-lg"
+                {mounted ? (
+                  <Popover
+                    open={openMenuId === ref.id}
+                    onOpenChange={(open) => setOpenMenuId(open ? ref.id : null)}
                   >
-                    <button
-                      onClick={() => {
-                        onRemoveReference(ref.id)
-                        setOpenMenuId(null)
-                      }}
-                      className="
-                        w-full flex items-center gap-2 px-2.5 py-1.5 rounded
-                        text-xs text-red-600 dark:text-red-400
-                        hover:bg-red-50 dark:hover:bg-red-500/10
-                        transition-colors
-                      "
+                    <PopoverTrigger asChild>
+                      <button
+                        className="
+                          p-1 rounded text-sand-400
+                          opacity-0 group-hover:opacity-100
+                          hover:text-charcoal dark:hover:text-sand-100
+                          hover:bg-sand-200 dark:hover:bg-sand-500/20
+                          transition-all duration-150
+                        "
+                      >
+                        <MoreHorizontal className="w-3.5 h-3.5" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      side="left"
+                      align="start"
+                      sideOffset={4}
+                      className="w-28 p-1 border-sand-200 dark:border-sand-500/30 bg-white dark:bg-[#1f1e1d] shadow-lg"
                     >
-                      <Trash2 className="w-3 h-3" />
-                      <span>Remove</span>
-                    </button>
-                  </PopoverContent>
-                </Popover>
+                      <button
+                        onClick={() => {
+                          onRemoveReference(ref.id)
+                          setOpenMenuId(null)
+                        }}
+                        className="
+                          w-full flex items-center gap-2 px-2.5 py-1.5 rounded
+                          text-xs text-red-600 dark:text-red-400
+                          hover:bg-red-50 dark:hover:bg-red-500/10
+                          transition-colors
+                        "
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Remove</span>
+                      </button>
+                    </PopoverContent>
+                  </Popover>
+                ) : (
+                  <button className="p-1 rounded text-sand-400 opacity-0">
+                    <MoreHorizontal className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             </div>
           )
         })}
 
         {/* Add Button - compact */}
-        {canAddMore && (
+        {canAddMore && mounted && (
           <Popover open={catalogOpen} onOpenChange={setCatalogOpen}>
             <PopoverTrigger asChild>
               <button

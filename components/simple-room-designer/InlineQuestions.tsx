@@ -7,7 +7,7 @@ export type Question = {
   id: string
   question: string
   header?: string
-  options: { label: string; value: string }[]
+  options: { label: string; value: string; naturalPhrase?: string }[]
   allowCustom?: boolean
   multiSelect?: boolean
 }
@@ -40,23 +40,23 @@ export function InlineQuestions({
     return () => clearTimeout(timer)
   }, [])
 
-  // Handle single select
-  const handleOptionClick = (value: string) => {
+  // Handle single select - store the human-readable label for use in prompts
+  const handleOptionClick = (label: string) => {
     if (!currentQuestion) return
 
     if (currentQuestion.multiSelect) {
-      // Multi-select: toggle the value
+      // Multi-select: toggle the label
       const currentAnswers = (answers[currentQuestion.id] as string[]) || []
-      const newAnswers = currentAnswers.includes(value)
-        ? currentAnswers.filter((v) => v !== value)
-        : [...currentAnswers, value]
+      const newAnswers = currentAnswers.includes(label)
+        ? currentAnswers.filter((v) => v !== label)
+        : [...currentAnswers, label]
       setAnswers((prev) => ({ ...prev, [currentQuestion.id]: newAnswers }))
       setShowCustom((prev) => ({ ...prev, [currentQuestion.id]: false }))
     } else {
       // Single select: set and advance
-      setAnswers((prev) => ({ ...prev, [currentQuestion.id]: value }))
+      setAnswers((prev) => ({ ...prev, [currentQuestion.id]: label }))
       setShowCustom((prev) => ({ ...prev, [currentQuestion.id]: false }))
-      advanceOrComplete(value)
+      advanceOrComplete(label)
     }
   }
 
@@ -178,11 +178,11 @@ export function InlineQuestions({
           {/* Options */}
           <div className="flex flex-wrap items-center gap-2">
             {currentQuestion.options.map((option, i) => {
-              const isSelected = selectedValues.includes(option.value)
+              const isSelected = selectedValues.includes(option.label)
               return (
                 <button
                   key={option.value}
-                  onClick={() => handleOptionClick(option.value)}
+                  onClick={() => handleOptionClick(option.label)}
                   className={`
                     group relative px-3.5 py-1.5 rounded-lg text-sm font-medium
                     transition-all duration-200 ease-out
