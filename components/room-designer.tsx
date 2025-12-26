@@ -76,8 +76,8 @@ async function imageUrlToBase64(url: string): Promise<string> {
   })
 }
 
-// Resize image to max 1568px (AI APIs auto-downscale beyond this anyway)
-async function resizeImage(dataUrl: string): Promise<string> {
+// Resize image to max 1568px and ensure base64 output (AI APIs auto-downscale beyond this anyway)
+async function resizeImage(imageUrl: string): Promise<string> {
   const MAX_SIZE = 1568
   const QUALITY = 0.9
 
@@ -88,14 +88,8 @@ async function resizeImage(dataUrl: string): Promise<string> {
       const { width, height } = img
       const longestEdge = Math.max(width, height)
 
-      // Skip if already within limits
-      if (longestEdge <= MAX_SIZE) {
-        resolve(dataUrl)
-        return
-      }
-
-      // Scale down to fit within MAX_SIZE
-      const scale = MAX_SIZE / longestEdge
+      // Always convert to base64 via canvas (handles both resize and format conversion)
+      const scale = longestEdge > MAX_SIZE ? MAX_SIZE / longestEdge : 1
       const newWidth = Math.round(width * scale)
       const newHeight = Math.round(height * scale)
 
@@ -106,8 +100,8 @@ async function resizeImage(dataUrl: string): Promise<string> {
       ctx.drawImage(img, 0, 0, newWidth, newHeight)
       resolve(canvas.toDataURL("image/jpeg", QUALITY))
     }
-    img.onerror = () => resolve(dataUrl)
-    img.src = dataUrl
+    img.onerror = () => resolve(imageUrl)
+    img.src = imageUrl
   })
 }
 
@@ -262,6 +256,9 @@ export function RoomDesigner() {
   const activeJobsRef = useRef<Set<string>>(new Set())
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
   const MAX_PARALLEL_JOBS = 3
+
+  const [upscalingItems, setUpscalingItems] = useState<Set<string>>(new Set())
+  const [removingBgItems, setRemovingBgItems] = useState<Set<string>>(new Set())
 
   const getReferenceImages = useCallback(() => {
     return placedItems
@@ -591,6 +588,86 @@ export function RoomDesigner() {
     link.click()
   }, [])
 
+  const handleUpscaleItem = useCallback(async (item: PlacedItem) => {
+    // Mark as upscaling
+    setUpscalingItems((prev) => new Set(prev).add(item.id))
+
+    try {
+      const response = await fetch("/api/upscale-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: item.src }),
+      })
+
+      const data = await response.json()
+
+      if (data.success && data.image) {
+        // Add upscaled image as new item next to original
+        const upscaledItem: PlacedItem = {
+          id: `upscaled-${Date.now()}`,
+          type: item.type,
+          src: data.image,
+          x: item.x + item.width + 20,
+          y: item.y,
+          width: data.width ? Math.min(data.width, item.width * 2) : item.width * 2,
+          height: data.height ? Math.min(data.height, item.height * 2) : item.height * 2,
+          aspectRatio: item.aspectRatio,
+          item: item.item ? { ...item.item, name: `${item.item.name} (2x)` } : undefined,
+        }
+        setPlacedItems((prev) => [...prev, upscaledItem])
+      } else {
+        console.error("Upscale failed:", data.error)
+      }
+    } catch (error) {
+      console.error("Upscale error:", error)
+    } finally {
+      setUpscalingItems((prev) => {
+        const next = new Set(prev)
+        next.delete(item.id)
+        return next
+      })
+    }
+  }, [])
+
+  const handleRemoveBgItem = useCallback(async (item: PlacedItem) => {
+    setRemovingBgItems((prev) => new Set(prev).add(item.id))
+
+    try {
+      const response = await fetch("/api/remove-background", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: item.src }),
+      })
+
+      const data = await response.json()
+
+      if (data.success && data.image) {
+        const newItem: PlacedItem = {
+          id: `nobg-${Date.now()}`,
+          type: item.type,
+          src: data.image,
+          x: item.x + item.width + 20,
+          y: item.y,
+          width: data.width || item.width,
+          height: data.height || item.height,
+          aspectRatio: item.aspectRatio,
+          item: item.item ? { ...item.item, name: `${item.item.name} (no bg)` } : undefined,
+        }
+        setPlacedItems((prev) => [...prev, newItem])
+      } else {
+        console.error("Remove background failed:", data.error)
+      }
+    } catch (error) {
+      console.error("Remove background error:", error)
+    } finally {
+      setRemovingBgItems((prev) => {
+        const next = new Set(prev)
+        next.delete(item.id)
+        return next
+      })
+    }
+  }, [])
+
   const getBaseAspectRatio = useCallback(() => {
     if (!baseImageId) return 16 / 9
     const baseItem = placedItems.find((item) => item.id === baseImageId)
@@ -815,6 +892,8 @@ export function RoomDesigner() {
         baseImageId={baseImageId}
         markerPlacementMode={markerPlacementMode}
         activeTool={activeTool}
+        upscalingItems={upscalingItems}
+        removingBgItems={removingBgItems}
         onItemSelect={setSelectedItem}
         onToggleGenerationSelection={handleToggleGenerationSelection}
         onSetBase={handleSetBase}
@@ -823,6 +902,8 @@ export function RoomDesigner() {
         onItemsDelete={handleItemsDelete}
         onRoomUpload={handleRoomUpload}
         onDownloadItem={handleDownloadItem}
+        onUpscaleItem={handleUpscaleItem}
+        onRemoveBgItem={handleRemoveBgItem}
         onAddPin={handleAddPin}
         onAddLasso={handleAddLasso}
         onRemoveMarker={handleRemoveMarker}

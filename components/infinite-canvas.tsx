@@ -3,7 +3,7 @@
 import type React from "react"
 import { forwardRef, useState, useCallback, useRef, useEffect } from "react"
 import { Rnd } from "react-rnd"
-import { Upload, Download, X, Check, Crown, Undo2, Redo2, Minus, Plus } from "lucide-react"
+import { Upload, Download, X, Check, Crown, Undo2, Redo2, Minus, Plus, ArrowUpFromLine, Loader2, ImageIcon, Eraser } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { PlacedItem, Marker } from "./room-designer"
 import { cn } from "@/lib/utils"
@@ -17,6 +17,8 @@ type InfiniteCanvasProps = {
   baseImageId: string | null
   markerPlacementMode: { refNumber: number } | null
   activeTool: Tool
+  upscalingItems: Set<string>
+  removingBgItems: Set<string>
   onItemSelect: (id: string | null) => void
   onToggleGenerationSelection: (id: string) => void
   onSetBase: (id: string) => void
@@ -25,6 +27,8 @@ type InfiniteCanvasProps = {
   onItemsDelete: (ids: string[]) => void
   onRoomUpload: (imageUrl: string, filename?: string) => void
   onDownloadItem: (item: PlacedItem) => void
+  onUpscaleItem: (item: PlacedItem, scale: number) => void
+  onRemoveBgItem: (item: PlacedItem) => void
   onAddPin: (x: number, y: number) => void
   onAddLasso: (points: { x: number; y: number }[]) => void
   onRemoveMarker: (markerId: string) => void
@@ -45,6 +49,8 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
       baseImageId,
       markerPlacementMode,
       activeTool,
+      upscalingItems,
+      removingBgItems,
       onItemSelect,
       onToggleGenerationSelection,
       onSetBase,
@@ -53,6 +59,8 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
       onItemsDelete,
       onRoomUpload,
       onDownloadItem,
+      onUpscaleItem,
+      onRemoveBgItem,
       onAddPin,
       onAddLasso,
       onRemoveMarker,
@@ -777,58 +785,24 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
                     </div>
                   )}
 
-                  {/* Selection checkbox and Set as Base button */}
-                  <div className="absolute bottom-2 left-2 flex items-center gap-1">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onToggleGenerationSelection(item.id)
-                      }}
-                      className={cn(
-                        "w-6 h-6 rounded-md flex items-center justify-center transition-colors",
-                        isSelectedForGen
-                          ? "bg-foreground text-background"
-                          : "bg-background/80 border border-border hover:bg-muted",
-                      )}
-                    >
-                      {isSelectedForGen && <Check className="w-4 h-4" />}
-                    </button>
-                    {isSelectedForGen && !isBase && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="h-6 text-xs px-2"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onSetBase(item.id)
-                        }}
-                      >
-                        Set as Base
-                      </Button>
-                    )}
-                  </div>
 
-                  {/* Hover controls */}
-                  {hoveredItem === item.id && (
-                    <div className="absolute top-2 right-2 flex items-center gap-1">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onDownloadItem(item)
-                        }}
-                        className="w-8 h-8 rounded-full bg-background/90 flex items-center justify-center hover:bg-background transition-colors shadow-md"
-                      >
-                        <Download className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onItemDelete(item.id)
-                        }}
-                        className="w-8 h-8 rounded-full bg-foreground flex items-center justify-center hover:bg-foreground/80 transition-colors shadow-md"
-                      >
-                        <X className="w-4 h-4 text-background" />
-                      </button>
+                  {/* Upscaling overlay */}
+                  {upscalingItems.has(item.id) && (
+                    <div className="absolute inset-0 bg-background/60 backdrop-blur-sm flex items-center justify-center z-10">
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-foreground text-background text-sm font-medium">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Upscaling...
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Removing background overlay */}
+                  {removingBgItems.has(item.id) && (
+                    <div className="absolute inset-0 bg-background/60 backdrop-blur-sm flex items-center justify-center z-10">
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-foreground text-background text-sm font-medium">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Removing background...
+                      </div>
                     </div>
                   )}
 
@@ -865,6 +839,132 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
             </div>
           </div>
         )}
+
+        {/* Selected Item Toolbar - positioned above the image */}
+        {selectedItem && (() => {
+          const item = items.find(i => i.id === selectedItem)
+          if (!item) return null
+          const isUpscaling = upscalingItems.has(item.id)
+          const isRemovingBg = removingBgItems.has(item.id)
+          const isSelectedForGen = selectedForGeneration.has(item.id)
+          const isBase = item.id === baseImageId
+
+          // Calculate position above the image
+          const toolbarX = item.x * zoom + panOffset.x + (item.width * zoom) / 2
+          const toolbarY = item.y * zoom + panOffset.y - 12
+
+          return (
+            <div
+              className="absolute z-50 flex flex-col items-center gap-1.5 pointer-events-none"
+              style={{
+                left: toolbarX,
+                top: toolbarY,
+                transform: 'translate(-50%, -100%)',
+              }}
+            >
+              {/* Main toolbar */}
+              <div className="flex items-center gap-1 bg-card/95 backdrop-blur-md border border-border rounded-xl px-2 py-1.5 shadow-lg pointer-events-auto">
+                {/* Selection toggle */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onToggleGenerationSelection(item.id)
+                  }}
+                  className={cn(
+                    "h-8 px-3 rounded-lg flex items-center gap-2 text-sm transition-colors",
+                    isSelectedForGen
+                      ? "bg-foreground text-background"
+                      : "hover:bg-muted"
+                  )}
+                >
+                  <div className={cn(
+                    "w-4 h-4 rounded border-2 flex items-center justify-center transition-colors",
+                    isSelectedForGen
+                      ? "border-background bg-background"
+                      : "border-current"
+                  )}>
+                    {isSelectedForGen && <Check className="w-3 h-3 text-foreground" />}
+                  </div>
+                  <span>Select</span>
+                </button>
+
+                {/* Set as Base - only show if selected for generation but not already base */}
+                {isSelectedForGen && !isBase && (
+                  <>
+                    <div className="w-px h-5 bg-border" />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 px-3 gap-2"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onSetBase(item.id)
+                      }}
+                    >
+                      <Crown className="w-4 h-4" />
+                      <span className="text-sm">Set as Base</span>
+                    </Button>
+                  </>
+                )}
+
+                <div className="w-px h-5 bg-border" />
+
+                {/* Upscale */}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 px-3 gap-2"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onUpscaleItem(item)
+                  }}
+                  disabled={isUpscaling || isRemovingBg}
+                >
+                  <ArrowUpFromLine className="w-4 h-4" />
+                  <span className="text-sm">Upscale</span>
+                </Button>
+
+                {/* Remove Background */}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 px-3 gap-2"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onRemoveBgItem(item)
+                  }}
+                  disabled={isUpscaling || isRemovingBg}
+                >
+                  <Eraser className="w-4 h-4" />
+                  <span className="text-sm">Remove bg</span>
+                </Button>
+
+                {/* Download */}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 px-3 gap-2"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDownloadItem(item)
+                  }}
+                >
+                  <Download className="w-4 h-4" />
+                  <span className="text-sm">Download</span>
+                </Button>
+              </div>
+
+              {/* Image info */}
+              <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                <div className="flex items-center gap-1.5">
+                  <ImageIcon className="w-3.5 h-3.5" />
+                  <span>{item.type === "generated" ? "Generated" : item.type === "room" ? "Room" : "Furniture"}</span>
+                </div>
+                <span className="tabular-nums">{Math.round(item.width)} × {Math.round(item.height)}</span>
+              </div>
+            </div>
+          )
+        })()}
 
         {/* Zoom Controls */}
         <div className="absolute bottom-4 right-4 flex items-center gap-1 bg-card/95 backdrop-blur-md border border-border rounded-xl px-2 py-1.5 shadow-lg z-40">
