@@ -756,6 +756,14 @@ export function SimpleRoomDesigner() {
             ) : (
               <div
                 onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation() }}
+                onDragEnter={(e) => { e.preventDefault(); e.stopPropagation() }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  const file = e.dataTransfer.files?.[0]
+                  if (file && file.type.startsWith("image/")) handleRoomUpload(file)
+                }}
                 className="h-full flex flex-col items-center justify-center border-2 border-dashed border-sand-300 dark:border-sand-500/30 rounded-2xl cursor-pointer hover:border-terracotta dark:hover:border-terracotta/70 hover:bg-sand-100/50 dark:hover:bg-sand-500/5 transition-all duration-300 group bg-white dark:bg-[#222120]"
               >
                 <div className="flex flex-col items-center gap-5 text-sand-500 dark:text-sand-400">
@@ -764,7 +772,7 @@ export function SimpleRoomDesigner() {
                   </div>
                   <div className="text-center">
                     <p className="text-xl font-display font-medium text-charcoal dark:text-sand-100">
-                      Upload your room
+                      Upload your image
                     </p>
                     <p className="text-sm text-sand-500 dark:text-sand-400 mt-1">
                       Drag & drop or click to browse
@@ -855,7 +863,7 @@ export function SimpleRoomDesigner() {
                 </div>
                 <div className="text-center">
                   <p className="text-base font-display font-medium text-charcoal dark:text-sand-100">
-                    Upload your room
+                    Upload your image
                   </p>
                   <p className="text-xs text-sand-500 dark:text-sand-400 mt-0.5">
                     Tap to browse

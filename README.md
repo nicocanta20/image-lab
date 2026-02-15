@@ -2,15 +2,20 @@
 
 AI-powered image generation and editing tool built with Next.js.
 
-Upload images, add references, and use AI to create, edit, and transform visuals — from interior design to product shots to anything you can describe.
+Originally built and tested for a furniture company to stage products into room photos, but designed to work for any use case — product shots, interior design, creative mockups, or anything you can describe.
+
+## What makes it different
+
+When your prompt is ambiguous, the AI asks clarifying questions directly in the UI before generating. For example, if you write "remove the chair" and there are multiple chairs, it'll ask which one. This means fewer wasted generations and better results.
 
 ## Features
 
 - **Create** — Generate images from text prompts with optional reference images
-- **Edit** — Modify existing images using lasso selection and natural language
-- **Add References** — Place reference objects into scenes with numbered markers
-- **Upscale** — Enhance image resolution
-- **Background Removal** — Remove backgrounds from any image
+- **Edit** — Select areas with lasso and describe changes in natural language
+- **References** — Drop numbered reference images onto a scene to guide generation
+- **Smart clarification** — AI analyzes your prompt and asks follow-up questions when needed
+- **Upscale** — Enhance image resolution with AI upscaling
+- **Background removal** — Remove backgrounds from any image
 
 ## Tech Stack
 
