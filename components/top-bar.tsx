@@ -23,8 +23,8 @@ export function TopBar() {
           </svg>
         </div>
         <span className="font-display font-medium text-charcoal dark:text-sand-100 tracking-tight text-base sm:text-lg">
-          <span className="sm:hidden">Interior</span>
-          <span className="hidden sm:inline">Interior Studio</span>
+          <span className="sm:hidden">Image Lab</span>
+          <span className="hidden sm:inline">Image Lab</span>
         </span>
       </div>
 

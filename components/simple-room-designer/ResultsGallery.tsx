@@ -160,7 +160,7 @@ export function ResultsGallery({
                     >
                       <img
                         src={result.src}
-                        alt="Generated room"
+                        alt="Generated image"
                         className="w-full h-full object-cover"
                       />
 
@@ -233,7 +233,7 @@ export function ResultsGallery({
 
               <img
                 src={selectedResult.src}
-                alt="Generated room"
+                alt="Generated image"
                 className="max-w-full max-h-full object-contain rounded-lg"
               />
 
@@ -324,7 +324,7 @@ export function ResultsGallery({
             </div>
             <p className="text-sm text-center">No results yet</p>
             <p className="text-xs text-center mt-1 max-w-[200px]">
-              Add furniture references and generate to see designs here
+              Add references and generate to see results here
             </p>
           </div>
         ) : (
@@ -348,7 +348,7 @@ export function ResultsGallery({
                 >
                   <img
                     src={result.src}
-                    alt="Generated room"
+                    alt="Generated image"
                     className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                   />
 
@@ -453,7 +453,7 @@ export function ResultsGallery({
 
               <img
                 src={selectedResult.src}
-                alt="Generated room"
+                alt="Generated image"
                 className="max-w-full max-h-full object-contain rounded"
               />
 

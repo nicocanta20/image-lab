@@ -207,7 +207,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
               <Upload className="w-8 h-8 text-muted-foreground" />
             </div>
             <div className="text-center">
-              <h3 className="text-lg font-medium text-foreground">Upload a room photo</h3>
+              <h3 className="text-lg font-medium text-foreground">Upload an image</h3>
               <p className="text-sm text-muted-foreground mt-1">Drag and drop or click to upload</p>
             </div>
             <label>

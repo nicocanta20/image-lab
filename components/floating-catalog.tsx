@@ -57,7 +57,7 @@ export function FloatingCatalog({ onSelect }: FloatingCatalogProps) {
         <div className="flex items-center justify-between p-3 border-b border-border">
           {!isCollapsed && (
             <div>
-              <h2 className="font-semibold text-sm text-foreground">Furniture</h2>
+              <h2 className="font-semibold text-sm text-foreground">Catalog</h2>
               <p className="text-xs text-muted-foreground">Click to add</p>
             </div>
           )}

@@ -12,7 +12,7 @@ export function GeneratedPreview({ image, onClose }: GeneratedPreviewProps) {
   const handleDownload = () => {
     const link = document.createElement("a")
     link.href = image
-    link.download = "generated-room.png"
+    link.download = "generated-image.png"
     link.click()
   }
 
@@ -34,7 +34,7 @@ export function GeneratedPreview({ image, onClose }: GeneratedPreviewProps) {
         <div className="relative rounded-xl overflow-hidden">
           <img
             src={image || "/placeholder.svg"}
-            alt="Generated room design"
+            alt="Generated image"
             className="w-full h-auto max-h-48 object-contain bg-muted"
           />
         </div>

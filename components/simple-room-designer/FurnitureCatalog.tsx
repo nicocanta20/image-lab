@@ -51,7 +51,7 @@ export function FurnitureCatalog({
       {/* Header */}
       <div className="p-4 border-b border-sand-200 dark:border-sand-500/20">
         <h3 className="font-display text-base font-semibold text-charcoal dark:text-sand-100">
-          Furniture Catalog
+          Reference catalog
         </h3>
         <p className="text-xs text-sand-500 dark:text-sand-400 mt-0.5">
           Select from catalog or upload custom

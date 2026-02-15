@@ -399,7 +399,7 @@ export function ReferencePanel({
       {disabled && references.length === 0 && (
         <div className="px-4 pb-3">
           <p className="text-[10px] text-sand-400 dark:text-sand-500 text-center">
-            Upload a room first
+            Upload an image first
           </p>
         </div>
       )}

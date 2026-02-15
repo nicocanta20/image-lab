@@ -17,10 +17,9 @@ const fraunces = Fraunces({
 })
 
 export const metadata: Metadata = {
-  title: "Room Designer - AI Furniture Staging",
+  title: "Image Lab - AI Image Generation & Editing",
   description:
-    "Design your room with AI-powered furniture staging. Upload a room photo, place furniture, and generate photorealistic renders.",
-    generator: 'v0.app'
+    "AI-powered image generation and editing tool. Upload images, add references, and use AI to create, edit, and transform visuals.",
 }
 
 export const viewport: Viewport = {

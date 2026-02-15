@@ -42,7 +42,7 @@ export function FurnitureCatalog({ onSelect }: FurnitureCatalogProps) {
   return (
     <aside className="w-72 border-l border-border bg-card flex flex-col">
       <div className="p-4 border-b border-border">
-        <h2 className="font-semibold text-foreground">Furniture Catalog</h2>
+        <h2 className="font-semibold text-foreground">Reference catalog</h2>
         <p className="text-sm text-muted-foreground mt-1">Click to add to canvas</p>
       </div>
 

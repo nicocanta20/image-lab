@@ -151,15 +151,15 @@ export function PromptInput({
 
   // Dynamic placeholder based on mode
   const placeholder = {
-    create: "Describe the room you want to create...",
+    create: "Describe what you want to create...",
     edit: "Describe changes (e.g., 'change walls to blue')...",
     "add-references": "Additional instructions (optional)...",
   }[generationMode]
 
   // Dynamic helper text based on mode
   const helperText = {
-    create: "Enter a prompt to generate a new room",
-    edit: "Enter a prompt to modify the room",
+    create: "Enter a prompt to generate a new image",
+    edit: "Enter a prompt to modify the image",
     "add-references": canGenerate ? "" : "Add reference images to generate",
   }[generationMode]
 

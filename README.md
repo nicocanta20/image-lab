@@ -1,30 +1,32 @@
-# Interior design generator
+# Image Lab
 
-*Automatically synced with your [v0.app](https://v0.app) deployments*
+AI-powered image generation and editing tool built with Next.js.
 
-[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/nicolas-cantarovicis-projects/v0-interior-design-generator)
-[![Built with v0](https://img.shields.io/badge/Built%20with-v0.app-black?style=for-the-badge)](https://v0.app/chat/p1JvY9lLiXn)
+Upload images, add references, and use AI to create, edit, and transform visuals — from interior design to product shots to anything you can describe.
 
-## Overview
+## Features
 
-This repository will stay in sync with your deployed chats on [v0.app](https://v0.app).
-Any changes you make to your deployed app will be automatically pushed to this repository from [v0.app](https://v0.app).
+- **Create** — Generate images from text prompts with optional reference images
+- **Edit** — Modify existing images using lasso selection and natural language
+- **Add References** — Place reference objects into scenes with numbered markers
+- **Upscale** — Enhance image resolution
+- **Background Removal** — Remove backgrounds from any image
 
-## Deployment
+## Tech Stack
 
-Your project is live at:
+- **Framework**: Next.js 16 / React 19
+- **AI Models**: Gemini (via AI SDK Gateway)
+- **Image Processing**: fal.ai, @imgly/background-removal
+- **Styling**: Tailwind CSS 4, Radix UI
+- **Deployment**: Vercel
 
-**[https://vercel.com/nicolas-cantarovicis-projects/v0-interior-design-generator](https://vercel.com/nicolas-cantarovicis-projects/v0-interior-design-generator)**
+## Getting Started
 
-## Build your app
+```bash
+pnpm install
+pnpm dev
+```
 
-Continue building your app on:
+The app runs at [http://localhost:3000](http://localhost:3000).
 
-**[https://v0.app/chat/p1JvY9lLiXn](https://v0.app/chat/p1JvY9lLiXn)**
-
-## How It Works
-
-1. Create and modify your project using [v0.app](https://v0.app)
-2. Deploy your chats from the v0 interface
-3. Changes are automatically pushed to this repository
-4. Vercel deploys the latest version from this repository
+You'll need to set up environment variables for the AI SDK Gateway and fal.ai API keys.

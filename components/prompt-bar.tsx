@@ -19,7 +19,7 @@ export function PromptBar({ prompt, onPromptChange, onGenerate, isGenerating, di
           <textarea
             value={prompt}
             onChange={(e) => onPromptChange(e.target.value)}
-            placeholder="Describe how you want the furniture to blend into the room..."
+            placeholder="Describe what you want to create or change..."
             className="w-full min-h-[80px] p-4 pb-14 bg-transparent text-foreground placeholder:text-muted-foreground resize-none focus:outline-none"
             disabled={disabled}
           />
@@ -50,7 +50,7 @@ export function PromptBar({ prompt, onPromptChange, onGenerate, isGenerating, di
         </div>
 
         {disabled && (
-          <p className="text-center text-sm text-muted-foreground mt-2">Upload a room photo to get started</p>
+          <p className="text-center text-sm text-muted-foreground mt-2">Upload an image to get started</p>
         )}
       </div>
     </div>

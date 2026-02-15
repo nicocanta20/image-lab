@@ -827,7 +827,7 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
                 <Upload className="w-10 h-10 text-muted-foreground" />
               </div>
               <div className="text-center">
-                <p className="text-lg font-medium text-foreground">Upload a room photo</p>
+                <p className="text-lg font-medium text-foreground">Upload an image</p>
                 <p className="text-sm text-muted-foreground">Drag and drop or click to upload</p>
               </div>
               <label className="pointer-events-auto">
@@ -958,7 +958,7 @@ export const InfiniteCanvas = forwardRef<HTMLDivElement, InfiniteCanvasProps>(
               <div className="flex items-center gap-3 text-sm text-muted-foreground">
                 <div className="flex items-center gap-1.5">
                   <ImageIcon className="w-3.5 h-3.5" />
-                  <span>{item.type === "generated" ? "Generated" : item.type === "room" ? "Room" : "Furniture"}</span>
+                  <span>{item.type === "generated" ? "Generated" : item.type === "room" ? "Room" : "Reference"}</span>
                 </div>
                 <span className="tabular-nums">{Math.round(item.width)} × {Math.round(item.height)}</span>
               </div>

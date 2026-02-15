@@ -17,7 +17,7 @@ export async function removeBackground(imageUrl: string): Promise<string> {
     // Remove background
     const resultBlob = await removeBackgroundFn(blob, {
       progress: (key, current, total) => {
-        console.log(`[v0] Background removal: ${key} ${current}/${total}`)
+        console.log(`[ImageLab] Background removal: ${key} ${current}/${total}`)
       },
     })
 
@@ -29,7 +29,7 @@ export async function removeBackground(imageUrl: string): Promise<string> {
       reader.readAsDataURL(resultBlob)
     })
   } catch (error) {
-    console.error("[v0] Background removal failed:", error)
+    console.error("[ImageLab] Background removal failed:", error)
     throw error
   }
 }
